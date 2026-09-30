@@ -28,8 +28,8 @@ with st.form("transaction_form", clear_on_submit=True):
         so_tien = st.number_input("Số tiền (Nhập số ÂM nếu chi tiền)", value=0, step=1000)
         
     with col2:
-        phan_loai = st.selectbox("Phân loại", ["Ăn uống", "Đi lại", "Mua sắm", "Gia đình", "Thu lặt vặt"])
-        noi_dung = st.text_input("Nội dung (VD: Trà sữa, Đổ xăng)")
+        phan_loai = st.selectbox("Phân loại", ["Ăn uống", "Sinh hoạt", "Giải trí", "Thu lặt vặt"])
+        noi_dung = st.text_input("Nội dung (VD: Ăn trưa, Đổ xăng)")
         
     submit = st.form_submit_button("Lưu Giao Dịch", type="primary", use_container_width=True)
 
@@ -37,22 +37,23 @@ with st.form("transaction_form", clear_on_submit=True):
         if so_tien == 0:
             st.warning("⚠️ Vui lòng nhập số tiền khác 0!")
         elif noi_dung == "":
-            st.warning("⚠️️ Vui lòng nhập nội dung giao dịch!")
+            st.warning("⚠️ Vui lòng nhập nội dung giao dịch!")
         else:
             with st.spinner("Đang lưu vào Google Sheets..."):
                 # 1. Tải dữ liệu hiện tại của sheet Transactions
                 df_trans = conn.read(worksheet="Transactions", ttl=0)
                 
-                # 2. Tạo mã ID mới
+                # 2. Tạo mã ID mới (Tạm thời dùng cấu trúc txn_ + số đếm)
                 new_id = f"txn_{len(df_trans) + 1}"
                 
-                # 3. Tạo dòng dữ liệu mới khớp với các cột trong file Sheet
+                # 3. Tạo dòng dữ liệu mới khớp 100% với tên cột trong Sheet
                 new_row = pd.DataFrame({
                     "id": [new_id],
-                    "date": [ngay.strftime("%d/%m/%Y")],
-                    "description": [noi_dung],
+                    "transaction_date": [ngay.strftime("%m/%d/%Y")],
+                    "type": [noi_dung],
                     "category": [phan_loai],
-                    "amount": [so_tien]
+                    "amount": [so_tien],
+                    "note": [""] # Cột ghi chú để trống
                 })
                 
                 # 4. Nối dòng mới vào bảng cũ và đẩy lên Sheets
