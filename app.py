@@ -9,5 +9,5 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Hiển thị dữ liệu từ sheet Dashboard
 st.subheader("Trạng thái hiện tại")
-dashboard_data = conn.read(worksheet="Dashboard")
+dashboard_data = conn.read(worksheet="Dashboard (Bảng điều khiển)")
 st.dataframe(dashboard_data)
