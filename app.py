@@ -66,7 +66,7 @@ else:
     st.warning("⏳ Hệ thống đang quá tải yêu cầu từ Google. Vui lòng nhấn F5 tải lại trang sau 1 phút.")
 
 # ==========================================
-# HÀM PYTHON TÍNH TOÁN CỐ ĐỊNH (THAY THẾ CÔNG THỨC SHEETS)
+# HÀM PYTHON TÍNH TOÁN CỐ ĐỊNH CHUẨN TÊN CỘT
 # ==========================================
 def calculate_fixed_expenses(df_fixed, df_adj, report_date):
     if df_fixed is None or df_fixed.empty:
@@ -82,18 +82,17 @@ def calculate_fixed_expenses(df_fixed, df_adj, report_date):
     trang_thai_list = []
 
     for idx, row in df_fixed.iterrows():
-        # Lấy giá trị gốc an toàn
         base_amt = pd.to_numeric(row.get("base_amount", 0), errors="coerce")
         if pd.isna(base_amt): base_amt = 0
 
-        ngay_thanh_t = row.get("ngay_thanh_t") # Tương ứng cột J (Payment day)
-        start_date = pd.to_datetime(row.get("start_date"), errors="coerce") # Cột D
-        end_date = pd.to_datetime(row.get("end_date"), errors="coerce") # Cột E
-        chu_ky = str(row.get("chu_ky", "")).strip() # Cột H (Hằng tháng / Hằng năm)
-        thang_thu_ti = pd.to_numeric(row.get("thang_thu_ti"), errors="coerce") # Cột I (Tháng thu tiền hằng năm)
-        item_id = str(row.get("id", "")).strip() # Cột A
+        ngay_thanh_t = row.get("ngay_thanh_toan")
+        start_date = pd.to_datetime(row.get("start_date"), errors="coerce")
+        end_date = pd.to_datetime(row.get("end_date"), errors="coerce")
+        chu_ky = str(row.get("chu_ky", "")).strip()
+        thang_thu_ti = pd.to_numeric(row.get("thang_thu_tien"), errors="coerce")
+        item_id = str(row.get("id", "")).strip()
 
-        # 1. Tính toán cột trang_thai (Logic: =IF(OR(ISBLANK(E2), E2 >= TODAY()), "Đang hoạt động", "Đã kết thúc"))
+        # Tính toán cột trang_thai
         today_dt = pd.to_datetime(date.today())
         if pd.isna(end_date) or end_date >= today_dt:
             trang_thai = "Đang hoạt động"
@@ -101,8 +100,7 @@ def calculate_fixed_expenses(df_fixed, df_adj, report_date):
             trang_thai = "Đã kết thúc"
         trang_thai_list.append(trang_thai)
 
-        # 2. Tính toán cột thuc_tra_hien_tai 
-        # Logic mô phỏng hàm Excel: Kiểm tra ngày, điều kiện chu kỳ và cộng dồn Expense_Adjustments
+        # Tính toán cột thuc_tra_hien_tai
         try:
             j_val = int(ngay_thanh_t) if not pd.isna(ngay_thanh_t) else None
         except:
@@ -114,17 +112,15 @@ def calculate_fixed_expenses(df_fixed, df_adj, report_date):
                 pay_date = datetime(rep_year, rep_month, j_val)
                 pay_pd = pd.to_datetime(pay_date)
                 
-                # Kiểm tra start_date & end_date
                 start_ok = pd.isna(start_date) or (pay_pd >= start_date)
                 end_ok = pd.isna(end_date) or (pay_pd <= end_date)
                 
-                # Kiểm tra chu kỳ
                 if chu_ky == "Hằng tháng":
                     cycle_ok = True
                 elif chu_ky == "Hằng năm":
                     cycle_ok = (not pd.isna(thang_thu_ti)) and (int(thang_thu_ti) == rep_month)
                 else:
-                    cycle_ok = True # Mặc định nếu không rõ chu kỳ
+                    cycle_ok = True
 
                 if start_ok and end_ok and cycle_ok:
                     condition_met = True
@@ -134,9 +130,7 @@ def calculate_fixed_expenses(df_fixed, df_adj, report_date):
         final_amount = 0
         if condition_met:
             final_amount = base_amt
-            # Cộng dồn từ bảng Expense_Adjustments nếu có khớp id và tháng báo cáo
             if df_adj is not None and not df_adj.empty:
-                # Giả định bảng Adjustments có cột id (hoặc B), amount (C), tháng (D dạng MM/yyyy)
                 for _, adj_row in df_adj.iterrows():
                     adj_id = str(adj_row.get("id", "")).strip()
                     adj_date = str(adj_row.get("date", "")).strip()
@@ -164,7 +158,6 @@ try:
     df_fixed_ana = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
     df_adj_ana = safe_read_sheet("Expense_Adjustments", ttl=600)
 
-    # Tự động gán giá trị tính toán thông minh bằng Python
     df_fixed_ana = calculate_fixed_expenses(df_fixed_ana, df_adj_ana, ngay_bao_cao)
 
     if df_trans_ana is not None and not df_trans_ana.empty and df_inc_ana is not None and not df_inc_ana.empty:
@@ -424,7 +417,7 @@ with tab_trans:
             st.info("Chưa có dữ liệu hoặc đang tải...")
             
     else:
-        st.info("Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
+        st.info("⏳ Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
 
 # -----------------------------------
 # TAB 2: THU NHẬP
@@ -478,9 +471,9 @@ with tab_income:
     
     if submit_inc:
         if so_tien_thu == 0:
-            st.warning("⚠️ Vူ lòng nhập số tiền lớn hơn 0!")
+            st.warning("⚠️ Vui lòng nhập số tiền lớn hơn 0!")
         elif not nguon_thu:
-            st.warning("⚠️ Vui lòng nhập nguồn thu!")
+            st.warning("⚠️️ Vui lòng nhập nguồn thu!")
         else:
             with st.spinner("Đang lưu dữ liệu..."):
                 date_str = ngay_thu.strftime("%m/%d/%Y")
@@ -526,17 +519,16 @@ with tab_income:
         st.info("Chưa có dữ liệu hoặc đang tải...")
 
 # -----------------------------------
-# TAB 3: CHI PHÍ CỐ ĐỊNH (Tích hợp Điều chỉnh & Tính toán tự động)
+# TAB 3: CHI PHÍ CỐ ĐỊNH (ĐỦ CỘT & ĐỒNG BỘ CHUẨN XÁC)
 # -----------------------------------
 with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
-    st.markdown("💡 **Mẹo:** Các cột `thuc_tra_hien_tai` và `trang_thai` được **tự động tính toán bằng thuật toán Python** bám sát mốc Ngày chọn báo cáo.")
+    st.markdown("💡 **Mẹo:** Giao diện hiển thị đầy đủ toàn bộ các cột tham số, ngày thanh toán, chu kỳ và tự động tính toán hai cột `thuc_tra_hien_tai`, `trang_thai` bằng Python.")
     
     df_fixed_raw = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
     df_adj_tab = safe_read_sheet("Expense_Adjustments", ttl=600)
     
     if df_fixed_raw is not None:
-        # Tính toán giá trị hiện tại để hiển thị metric và bảng
         df_fixed_computed = calculate_fixed_expenses(df_fixed_raw.copy(), df_adj_tab, ngay_bao_cao)
         
         tong_chi_phi = df_fixed_computed["thuc_tra_hien_tai"].sum() if not df_fixed_computed.empty else 0
@@ -547,8 +539,12 @@ with tab_fixed:
         )
         st.divider() 
         
-        # Cho phép chỉnh sửa toàn bộ các cột tham số gốc
-        editable_cols = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_ti", "ngay_thanh_t", "thuc_tra_hien_tai", "trang_thai"]
+        # Đầy đủ toàn bộ các cột đúng theo ý tưởng Google Sheets của bạn
+        editable_cols = [
+            "id", "name", "base_amount", "start_date", "end_date", 
+            "chu_ky", "thang_thu_tien", "ngay_thanh_toan", 
+            "thuc_tra_hien_tai", "trang_thai"
+        ]
         existing_cols = [col for col in editable_cols if col in df_fixed_computed.columns]
         
         edited_df_fixed = st.data_editor(
@@ -566,16 +562,20 @@ with tab_fixed:
         submit_fixed = st.button("💾 Lưu Bảng Chi Phí Cố Định", type="primary", use_container_width=True)
         
         if submit_fixed:
-            with st.spinner("Đang đồng bộ dữ liệu tham số gốc lên Google Sheets..."):
+            with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
                 try:
-                    # Lọc chỉ lấy các cột gốc cấu hình để đẩy lên (tránh ghi đè lệch cấu trúc)
-                    push_cols = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_ti", "ngay_thanh_t"]
-                    valid_push_cols = [c for c in push_cols if c in edited_df_fixed.columns]
+                    for idx, row in edited_df_fixed.iterrows():
+                        if idx < len(df_fixed_raw):
+                            for col in ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_tien", "ngay_thanh_toan"]:
+                                if col in df_fixed_raw.columns and col in edited_df_fixed.columns:
+                                    df_fixed_raw.loc[idx, col] = row[col]
                     
-                    df_to_push = edited_df_fixed[valid_push_cols].dropna(how="all")
-                    conn.update(worksheet="Fixed_Expenses_Base", data=df_to_push)
+                    df_final_push = calculate_fixed_expenses(df_fixed_raw.copy(), df_adj_tab, ngay_bao_cao)
+                    df_final_push = df_final_push.dropna(how="all")
                     
-                    st.toast("✅ Đã cập nhật tham số gốc thành công!", icon="🎉")
+                    conn.update(worksheet="Fixed_Expenses_Base", data=df_final_push)
+                    
+                    st.toast("✅ Đã cập nhật đầy đủ cột và đồng bộ lên Google Sheets!", icon="🎉")
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
