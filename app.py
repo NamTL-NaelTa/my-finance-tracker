@@ -42,10 +42,7 @@ if cap_nhat_btn:
             gc = gspread.service_account_from_dict(st.secrets["connections"]["gsheets"])
             sh = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
             worksheet = sh.worksheet("Dashboard")
-            
-            # Ép kiểu truyền dữ liệu chuẩn Date để Google Sheets hiểu và kích hoạt công thức mảng
             worksheet.update("B1", [[ngay_bao_cao.strftime("%Y-%m-%d")]], value_input_option='USER_ENTERED')
-            
             st.cache_data.clear()
             st.rerun() 
         except Exception as e:
@@ -155,6 +152,18 @@ with tab_trans:
                         st.rerun()
                     else:
                         st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
+        
+        # HIỂN THỊ 5 GIAO DỊCH GẦN NHẤT ĐỂ KIỂM TRA
+        st.divider()
+        st.write("🕒 **5 Giao dịch gần nhất**")
+        df_trans_history = safe_read_sheet("Transactions", ttl=600)
+        if df_trans_history is not None and not df_trans_history.empty:
+            # Lấy 5 dòng cuối cùng (mới nhất), đảo ngược để hiển thị mới nhất lên trên
+            last_5_trans = df_trans_history.tail(5).iloc[::-1]
+            st.dataframe(last_5_trans, hide_index=True, use_container_width=True)
+        else:
+            st.info("Chưa có dữ liệu hoặc đang tải...")
+            
     else:
         st.info("Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
 
@@ -244,6 +253,15 @@ with tab_income:
                     st.rerun()
                 except Exception:
                     st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
+                    
+    # HIỂN THỊ 5 KHOẢN THU GẦN NHẤT ĐỂ KIỂM TRA
+    st.divider()
+    st.write("🕒 **5 Khoản thu gần nhất**")
+    if not df_inc_read.empty:
+        last_5_inc = df_inc_read.tail(5).iloc[::-1]
+        st.dataframe(last_5_inc, hide_index=True, use_container_width=True)
+    else:
+        st.info("Chưa có dữ liệu hoặc đang tải...")
 
 # -----------------------------------
 # TAB 3: CHI PHÍ CỐ ĐỊNH
