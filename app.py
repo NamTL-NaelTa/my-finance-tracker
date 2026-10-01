@@ -102,7 +102,6 @@ def calculate_fixed_expenses(df_fixed, df_adj, report_date):
 
         condition_met = False
         if j_val is not None:
-            # Thuật toán chống lỗi tháng thiếu ngày (VD: Hạn ngày 30 nhưng tháng 2 chỉ có 28 ngày)
             last_day_of_month = calendar.monthrange(rep_year, rep_month)[1]
             actual_pay_day = min(j_val, last_day_of_month)
             
@@ -171,21 +170,73 @@ if cap_nhat_btn:
         st.rerun() 
 
 # ==========================================
-# TRÁI TIM ỨNG DỤNG (DATA ENGINE CHẠY 1 LẦN)
+# TRÁI TIM ỨNG DỤNG (DATA ENGINE HYBRID)
 # ==========================================
 with st.spinner("Đang kết nối cơ sở dữ liệu..."):
+    dashboard_raw = safe_read_sheet("Dashboard", ttl=600)
     df_trans_raw = safe_read_sheet("Transactions", ttl=600)
     df_inc_raw = safe_read_sheet("Incomes", ttl=600)
     df_fixed_raw = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
     df_adj_raw = safe_read_sheet("Expense_Adjustments", ttl=600)
     df_danhmuc_raw = safe_read_sheet("Danh_muc", ttl=600)
 
-if df_trans_raw is not None and df_inc_raw is not None and df_fixed_raw is not None:
-    # 1. Tính toán Chi Phí Cố Định
+if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is not None:
+    
+    # 1. TÍNH TOÁN CHI PHÍ CỐ ĐỊNH CHÍNH XÁC BẰNG PYTHON
     df_fixed_computed = calculate_fixed_expenses(df_fixed_raw.copy(), df_adj_raw, ngay_bao_cao)
     chi_co_dinh = df_fixed_computed["thuc_tra_hien_tai"].sum() if not df_fixed_computed.empty else 0
 
-    # 2. Xử lý Giao dịch & Thu nhập
+    # 2. XỬ LÝ DASHBOARD HYBRID (KẾT HỢP GOOGLE SHEETS + PYTHON)
+    if not dashboard_raw.empty and len(dashboard_raw.columns) > 1:
+        col_name = dashboard_raw.columns[1]
+        
+        # Chuyển đổi dữ liệu chuỗi có dấu phẩy thành số thực để tính toán
+        for idx, row in dashboard_raw.iterrows():
+            try:
+                val_str = str(row[col_name]).replace(',', '').strip()
+                if val_str:
+                    dashboard_raw.at[idx, col_name] = float(val_str)
+            except:
+                pass
+        
+        # Tiêm số chi cố định chuẩn của Python vào Bảng
+        idx_fixed = dashboard_raw[dashboard_raw.iloc[:, 0].astype(str).str.contains("TỔNG CHI CỐ ĐỊNH", na=False, case=False)].index
+        if not idx_fixed.empty:
+            dashboard_raw.loc[idx_fixed[0], col_name] = chi_co_dinh
+            
+        # Lấy giá trị Thu Nhập và Đã Tiêu (giữ nguyên công thức từ Google Sheets của bạn)
+        try:
+            tong_thu = float(dashboard_raw.loc[dashboard_raw.iloc[:, 0].astype(str).str.contains("TỔNG THU NHẬP", na=False, case=False), col_name].values[0])
+        except:
+            tong_thu = 0
+            
+        try:
+            tong_tieu = float(dashboard_raw.loc[dashboard_raw.iloc[:, 0].astype(str).str.contains("TỔNG ĐÃ TIÊU", na=False, case=False), col_name].values[0])
+        except:
+            tong_tieu = 0
+            
+        # Tính toán lại Khoản Dư Hiện Tại
+        khoan_du = tong_thu - chi_co_dinh - abs(tong_tieu)
+        idx_du = dashboard_raw[dashboard_raw.iloc[:, 0].astype(str).str.contains("KHOẢN DƯ HIỆN TẠI", na=False, case=False)].index
+        if not idx_du.empty:
+            dashboard_raw.loc[idx_du[0], col_name] = khoan_du
+
+        # Hiển thị bảng Dashboard
+        if privacy_mode:
+            display_dash = dashboard_raw.copy()
+            display_dash[col_name] = "🔒 ***"
+            st.dataframe(display_dash, hide_index=True, use_container_width=True)
+        else:
+            st.dataframe(
+                dashboard_raw, 
+                hide_index=True, 
+                use_container_width=True,
+                column_config={
+                    col_name: st.column_config.NumberColumn(format="%,.0f")
+                }
+            )
+
+    # 3. LỌC GIAO DỊCH VÀ THU NHẬP (Dành riêng cho Phân tích Radar)
     report_dt = pd.to_datetime(ngay_bao_cao)
     current_month_str = report_dt.strftime('%m/%Y')
     
@@ -193,45 +244,23 @@ if df_trans_raw is not None and df_inc_raw is not None and df_fixed_raw is not N
     df_inc_ana = df_inc_raw.copy()
 
     tong_chi_thang = 0
-    tong_thu_thang = 0
+    tong_thu_thang_hien_tai = 0
     trans_current_month = pd.DataFrame()
 
     if not df_trans_ana.empty:
-        df_trans_ana['date'] = pd.to_datetime(df_trans_ana['transaction_date'], format='%m/%d/%Y', errors='coerce')
+        # Bỏ format chặt chẽ để Pandas tự nội suy ngày tháng, chống lỗi dữ liệu nhập tay
+        df_trans_ana['date'] = pd.to_datetime(df_trans_ana['transaction_date'], errors='coerce')
         df_trans_ana['Tháng'] = df_trans_ana['date'].dt.strftime('%m/%Y')
         df_trans_ana['amount'] = pd.to_numeric(df_trans_ana['amount'], errors='coerce').fillna(0)
         trans_current_month = df_trans_ana[df_trans_ana['Tháng'] == current_month_str].copy()
         tong_chi_thang = abs(trans_current_month['amount'].sum())
 
     if not df_inc_ana.empty:
-        df_inc_ana['date'] = pd.to_datetime(df_inc_ana['received_date'], format='%m/%d/%Y', errors='coerce')
+        df_inc_ana['date'] = pd.to_datetime(df_inc_ana['received_date'], errors='coerce')
         df_inc_ana['Tháng'] = df_inc_ana['date'].dt.strftime('%m/%Y')
         df_inc_ana['amount'] = pd.to_numeric(df_inc_ana['amount'], errors='coerce').fillna(0)
         inc_current_month = df_inc_ana[df_inc_ana['Tháng'] == current_month_str].copy()
-        tong_thu_thang = inc_current_month['amount'].sum()
-
-    khoan_du_hien_tai = tong_thu_thang - tong_chi_thang - chi_co_dinh
-
-    # 3. VẼ DASHBOARD ĐỘC LẬP BẰNG PYTHON (Đã gỡ bỏ sự phụ thuộc Google Sheets)
-    dash_col_name = report_dt.strftime("%d/%m/%Y")
-    dash_df = pd.DataFrame({
-        "Chọn Tháng Báo Cáo:": ["TỔNG THU NHẬP:", "TỔNG CHI CỐ ĐỊNH:", "TỔNG ĐÃ TIÊU/TIẾT KIỆM:", "KHOẢN DƯ HIỆN TẠI:"],
-        dash_col_name: [tong_thu_thang, chi_co_dinh, -tong_chi_thang, khoan_du_hien_tai]
-    })
-
-    if privacy_mode:
-        display_dash = dash_df.copy()
-        display_dash[dash_col_name] = "🔒 ***"
-        st.dataframe(display_dash, hide_index=True, use_container_width=True)
-    else:
-        st.dataframe(
-            dash_df, 
-            hide_index=True, 
-            use_container_width=True,
-            column_config={
-                dash_col_name: st.column_config.NumberColumn(format="%,.0f")
-            }
-        )
+        tong_thu_thang_hien_tai = inc_current_month['amount'].sum()
 
     # ==========================================
     # KHU VỰC PHÂN TÍCH & DỰ BÁO DÒNG TIỀN
@@ -252,12 +281,12 @@ if df_trans_raw is not None and df_inc_raw is not None and df_fixed_raw is not N
         with col_sankey:
             cat_sums = trans_current_month.groupby('category')['amount'].sum().abs().reset_index()
             
-            if tong_thu_thang > 0 and not cat_sums.empty:
+            if tong_thu_thang_hien_tai > 0 and not cat_sums.empty:
                 labels = ["Tổng Thu"] + cat_sums['category'].tolist() + ["Chi Cố Định", "Tiết Kiệm/Dư"]
                 sources = [0] * (len(cat_sums) + 2)
                 targets = list(range(1, len(labels)))
                 
-                tiet_kiem = tong_thu_thang - tong_chi_thang - chi_co_dinh
+                tiet_kiem = tong_thu_thang_hien_tai - tong_chi_thang - chi_co_dinh
                 values = cat_sums['amount'].tolist() + [chi_co_dinh, max(0, tiet_kiem)]
                 
                 fig = go.Figure(data=[go.Sankey(
@@ -335,7 +364,7 @@ if df_trans_raw is not None and df_inc_raw is not None and df_fixed_raw is not N
         if current_day > 0:
             run_rate_chi_vat = (tong_chi_thang / current_day) * days_in_month
         
-        du_bao_cuoi_thang = tong_thu_thang - run_rate_chi_vat - chi_co_dinh
+        du_bao_cuoi_thang = tong_thu_thang_hien_tai - run_rate_chi_vat - chi_co_dinh
 
         col_a1, col_a2 = st.columns(2)
         col_a1.metric("Tốc độ đốt tiền dự kiến (Run Rate)", mask_money(run_rate_chi_vat), delta=f"Chi vặt thực tế {current_day} ngày: {int(tong_chi_thang):,}", delta_color="off")
@@ -607,7 +636,6 @@ if df_trans_raw is not None and df_inc_raw is not None and df_fixed_raw is not N
         if submit_fixed:
             with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
                 try:
-                    # Lấy dữ liệu người dùng nhập, tự động tính toán lại và đẩy lên
                     cols_to_update = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_tien", "ngay_thanh_toan"]
                     df_to_save = edited_df_fixed[cols_to_update].copy()
                     
@@ -622,7 +650,7 @@ if df_trans_raw is not None and df_inc_raw is not None and df_fixed_raw is not N
                 except Exception as e:
                     st.error(f"⚠️ Lỗi: {e}")
                     
-        with st.expander("🛠️ Điều chỉnh ngân sách cố định (Phụ thu / Giảm trừ)"):
+        with st.expander("🛠️️ Điều chỉnh ngân sách cố định (Phụ thu / Giảm trừ)"):
             st.markdown("Bảng ghi nhận các khoản tăng/giảm đột xuất cho các gói cước cố định.")
             if df_adj_raw is not None:
                 edited_df_adj = st.data_editor(
