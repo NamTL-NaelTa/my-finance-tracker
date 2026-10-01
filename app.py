@@ -77,7 +77,6 @@ try:
     df_fixed_ana = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
 
     if df_trans_ana is not None and not df_trans_ana.empty and df_inc_ana is not None and not df_inc_ana.empty:
-        # 1. TIỀN XỬ LÝ DỮ LIỆU CHUNG
         df_trans_ana['date'] = pd.to_datetime(df_trans_ana['transaction_date'], format='%m/%d/%Y', errors='coerce')
         df_trans_ana['Tháng'] = df_trans_ana['date'].dt.strftime('%m/%Y')
         df_trans_ana['amount'] = pd.to_numeric(df_trans_ana['amount'], errors='coerce').fillna(0)
@@ -89,7 +88,6 @@ try:
         report_date_dt = pd.to_datetime(ngay_bao_cao)
         current_month_str = report_date_dt.strftime('%m/%Y')
 
-        # Giao dịch trong tháng báo cáo
         trans_current_month = df_trans_ana[df_trans_ana['Tháng'] == current_month_str].copy()
         inc_current_month = df_inc_ana[df_inc_ana['Tháng'] == current_month_str].copy()
         
@@ -101,28 +99,21 @@ try:
             df_fixed_ana["thuc_tra_hien_tai"] = pd.to_numeric(df_fixed_ana["thuc_tra_hien_tai"], errors="coerce").fillna(0)
             chi_co_dinh = df_fixed_ana["thuc_tra_hien_tai"].sum()
 
-        # QUY HOẠCH UX TỐI ƯU: 3 TAB CHỨC NĂNG
         tab_overview, tab_detail, tab_action = st.tabs([
             "🌊 Toàn cảnh (Sankey & 50/30/20)", 
             "🔍 Chi tiết & Lịch sử", 
             "⚠️ Cảnh báo & Dự báo"
         ])
 
-        # ==========================================
-        # TAB 1: BỨC TRANH TOÀN CẢNH (OVERVIEW)
-        # ==========================================
         with tab_overview:
             st.markdown(f"**Dòng chảy tài chính & Cơ cấu chi tiêu (Tháng {current_month_str})**")
             col_sankey, col_ratio = st.columns([3, 2])
             
             with col_sankey:
-                # VẼ BẢN ĐỒ DÒNG CHẢY (SANKEY DIAGRAM)
                 cat_sums = trans_current_month.groupby('category')['amount'].sum().abs().reset_index()
                 
                 if tong_thu_thang > 0 and not cat_sums.empty:
                     labels = ["Tổng Thu"] + cat_sums['category'].tolist() + ["Chi Cố Định", "Tiết Kiệm/Dư"]
-                    
-                    # Logic Node: Nguồn (Thu) -> Đích (Các khoản chi & Tiết kiệm)
                     sources = [0] * (len(cat_sums) + 2)
                     targets = list(range(1, len(labels)))
                     
@@ -139,10 +130,8 @@ try:
                     st.info("Chưa đủ dữ liệu Thu/Chi trong tháng này để vẽ biểu đồ dòng chảy.")
 
             with col_ratio:
-                # MÔ HÌNH PHÂN RÃ NEED VS WANT (50/30/20)
                 st.markdown("**Định chuẩn sức khỏe tài chính**")
                 
-                # Hàm phân loại cơ bản
                 def classify_need(cat):
                     needs_keywords = ['ăn', 'uống', 'đi lại', 'xăng', 'nhà', 'điện', 'nước', 'sức khỏe', 'y tế', 'bảo hiểm']
                     return "Thiết yếu (Target: 50%)" if any(k in str(cat).lower() for k in needs_keywords) else "Linh hoạt/Mong muốn (Target: 30%)"
@@ -151,21 +140,16 @@ try:
                     trans_current_month['Phân_loại'] = trans_current_month['category'].apply(classify_need)
                     ratio_df = trans_current_month.groupby('Phân_loại')['amount'].sum().abs().reset_index()
                     
-                    # Thêm chi cố định vào Thiết yếu
                     if chi_co_dinh > 0:
                         if "Thiết yếu (Target: 50%)" in ratio_df['Phân_loại'].values:
                             ratio_df.loc[ratio_df['Phân_loại'] == "Thiết yếu (Target: 50%)", 'amount'] += chi_co_dinh
                         else:
                             ratio_df.loc[len(ratio_df)] = ["Thiết yếu (Target: 50%)", chi_co_dinh]
                     
-                    # Vẽ biểu đồ tròn rỗng (Donut Chart)
                     fig_pie = go.Figure(data=[go.Pie(labels=ratio_df['Phân_loại'], values=ratio_df['amount'], hole=.4)])
                     fig_pie.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=10))
                     st.plotly_chart(fig_pie, use_container_width=True)
 
-        # ==========================================
-        # TAB 2: SO CHI TIẾT (Pivot & Bar)
-        # ==========================================
         with tab_detail:
             khoang_thoi_gian = st.selectbox(
                 "⏳ Chọn thời gian thống kê (tính từ ngày chốt sổ)",
@@ -203,13 +187,9 @@ try:
             else:
                 st.info("Không có dữ liệu trong thời gian này.")
 
-        # ==========================================
-        # TAB 3: CẢNH BÁO & DỰ BÁO (ACTIONABLE)
-        # ==========================================
         with tab_action:
             st.markdown("**Radar giám sát Dòng tiền & Dự báo**")
             
-            # TÍNH TOÁN RUN RATE (Tốc độ đốt tiền)
             current_day = report_date_dt.day
             days_in_month = calendar.monthrange(report_date_dt.year, report_date_dt.month)[1]
             
@@ -225,10 +205,8 @@ try:
             
             st.divider()
             
-            # HỆ THỐNG PHÁT HIỆN BẤT THƯỜNG (ANOMALY DETECTION)
             st.markdown("🚨 **Cảnh báo rò rỉ bất thường**")
             
-            # So sánh tháng hiện tại với trung bình 3 tháng trước đó
             past_3_months = [
                 (report_date_dt - pd.DateOffset(months=1)).strftime('%m/%Y'),
                 (report_date_dt - pd.DateOffset(months=2)).strftime('%m/%Y'),
@@ -237,7 +215,6 @@ try:
             
             df_past_3m = df_trans_ana[df_trans_ana['Tháng'].isin(past_3_months)]
             if not df_past_3m.empty and not trans_current_month.empty:
-                # Tính trung bình chi tiêu mỗi nhóm trong 3 tháng qua
                 avg_past_3m = df_past_3m.groupby('category')['amount'].sum().abs() / 3
                 curr_month_spent = trans_current_month.groupby('category')['amount'].sum().abs()
                 
@@ -245,7 +222,6 @@ try:
                 for cat, spent in curr_month_spent.items():
                     if cat in avg_past_3m and avg_past_3m[cat] > 0:
                         avg_spent = avg_past_3m[cat]
-                        # Bất thường nếu tiêu vượt 40% so với trung bình và số tiền vượt lớn hơn 500k
                         if spent > avg_spent * 1.4 and (spent - avg_spent) > 500000:
                             percent_increase = ((spent - avg_spent) / avg_spent) * 100
                             st.warning(f"⚠️ **{cat}**: Tháng này tiêu {int(spent):,}đ (Tăng **{int(percent_increase)}%** so với trung bình 3 tháng trước).")
@@ -264,10 +240,12 @@ except Exception as e:
 # ==========================================
 st.divider()
 
-tab_trans, tab_income, tab_fixed = st.tabs([
+# Thêm tab_category vào danh sách Tabs
+tab_trans, tab_income, tab_fixed, tab_category = st.tabs([
     "🛒 Giao dịch", 
     "💰 Thu nhập", 
-    "🔒 Chi phí cố định"
+    "🔒 Chi phí cố định",
+    "📑 Danh mục"
 ])
 
 # -----------------------------------
@@ -553,5 +531,40 @@ with tab_fixed:
                             st.error(f"⚠️ Lỗi: {e}")
             else:
                 st.info("⏳ Đang đợi kết nối từ Google Sheets...")
+    else:
+        st.info("⏳ Đang đợi kết nối từ Google Sheets...")
+
+# -----------------------------------
+# TAB 4: QUẢN LÝ DANH MỤC (MỚI)
+# -----------------------------------
+with tab_category:
+    st.subheader("📑 Quản lý Danh mục (Categories & Types)")
+    st.markdown("Thêm, sửa, hoặc xóa các nhóm chi tiêu, khoản chi tiết và mã quy ước trực tiếp tại đây. Chú ý giữ đúng cấu trúc cột để ID được tạo chuẩn xác.")
+    
+    df_danhmuc_edit = safe_read_sheet("Danh_muc", ttl=600)
+    
+    if df_danhmuc_edit is not None:
+        edited_danhmuc = st.data_editor(
+            df_danhmuc_edit,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="editor_danhmuc"
+        )
+        
+        submit_danhmuc = st.button("💾 Lưu Danh Mục", type="primary", use_container_width=True)
+        
+        if submit_danhmuc:
+            with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
+                try:
+                    # Loại bỏ các dòng trống nếu bạn vô tình bấm thêm dòng mà không nhập liệu
+                    edited_danhmuc = edited_danhmuc.dropna(how="all")
+                    conn.update(worksheet="Danh_muc", data=edited_danhmuc)
+                    
+                    st.toast("✅ Đã cập nhật Danh mục thành công!", icon="🎉")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"⚠️ Lỗi cập nhật: {e}")
     else:
         st.info("⏳ Đang đợi kết nối từ Google Sheets...")
