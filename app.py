@@ -86,22 +86,67 @@ try:
         tab_stats, tab_forecast = st.tabs(["📊 Thống kê Chi tiêu", "🔮 Dự báo Tiết kiệm"])
         
         with tab_stats:
-            st.markdown("**Tần suất & Tỷ trọng chi tiêu theo danh mục**")
-            cat_stats = df_trans_ana.groupby('category').agg(
-                Số_GD=('id', 'count'),
-                Tổng_tiền=('amount', 'sum')
-            ).reset_index().sort_values(by='Số_GD', ascending=False)
+            col_filter, _ = st.columns([2, 3])
+            with col_filter:
+                khoang_thoi_gian = st.selectbox(
+                    "⏳ Chọn thời gian thống kê (tính từ ngày chốt sổ)",
+                    ["1 Tuần", "2 Tuần", "1 Tháng", "3 Tháng", "6 Tháng", "1 Năm", "Tất cả"]
+                )
 
-            col_chart, col_table = st.columns([3, 2])
-            with col_chart:
-                st.bar_chart(cat_stats.set_index('category')['Tổng_tiền'])
-            with col_table:
-                st.dataframe(cat_stats, hide_index=True, column_config={"Tổng_tiền": st.column_config.NumberColumn(format="%,.0f")})
+            # Xác định mốc thời gian bắt đầu dựa trên lựa chọn
+            report_date_dt = pd.to_datetime(ngay_bao_cao)
+            if khoang_thoi_gian == "1 Tuần":
+                start_date = report_date_dt - pd.DateOffset(weeks=1)
+            elif khoang_thoi_gian == "2 Tuần":
+                start_date = report_date_dt - pd.DateOffset(weeks=2)
+            elif khoang_thoi_gian == "1 Tháng":
+                start_date = report_date_dt - pd.DateOffset(months=1)
+            elif khoang_thoi_gian == "3 Tháng":
+                start_date = report_date_dt - pd.DateOffset(months=3)
+            elif khoang_thoi_gian == "6 Tháng":
+                start_date = report_date_dt - pd.DateOffset(months=6)
+            elif khoang_thoi_gian == "1 Năm":
+                start_date = report_date_dt - pd.DateOffset(years=1)
+            else:
+                start_date = None
+
+            # Lọc dữ liệu giao dịch theo khoảng thời gian
+            if start_date is not None:
+                mask = (df_trans_ana['date'] >= start_date) & (df_trans_ana['date'] <= report_date_dt)
+                df_filtered = df_trans_ana.loc[mask]
+            else:
+                df_filtered = df_trans_ana
+
+            st.markdown(f"**Tần suất & Tỷ trọng chi tiêu ({khoang_thoi_gian})**")
+            if not df_filtered.empty:
+                cat_stats = df_filtered.groupby('category').agg(
+                    Số_GD=('id', 'count'),
+                    Tổng_tiền=('amount', 'sum')
+                ).reset_index().sort_values(by='Số_GD', ascending=False)
+
+                # Lấy giá trị tuyệt đối để biểu đồ hiển thị cột số dương trực quan
+                cat_stats['Tổng_tiền_hiển_thị'] = cat_stats['Tổng_tiền'].abs()
+
+                col_chart, col_table = st.columns([3, 2])
+                with col_chart:
+                    st.bar_chart(cat_stats.set_index('category')['Tổng_tiền_hiển_thị'])
+                with col_table:
+                    # Ẩn cột tính toán phụ, chỉ hiển thị số gốc
+                    st.dataframe(
+                        cat_stats[['category', 'Số_GD', 'Tổng_tiền']], 
+                        hide_index=True, 
+                        column_config={"Tổng_tiền": st.column_config.NumberColumn(format="%,.0f")}
+                    )
+            else:
+                st.info("Không có dữ liệu giao dịch trong khoảng thời gian này.")
 
             st.markdown("**Ma trận chi tiêu chi tiết theo tháng**")
-            pivot_df = df_trans_ana.pivot_table(index='category', columns='Tháng', values='amount', aggfunc='sum', fill_value=0)
-            pivot_config = {col: st.column_config.NumberColumn(format="%,.0f") for col in pivot_df.columns}
-            st.dataframe(pivot_df, use_container_width=True, column_config=pivot_config)
+            if not df_filtered.empty:
+                pivot_df = df_filtered.pivot_table(index='category', columns='Tháng', values='amount', aggfunc='sum', fill_value=0)
+                pivot_config = {col: st.column_config.NumberColumn(format="%,.0f") for col in pivot_df.columns}
+                st.dataframe(pivot_df, use_container_width=True, column_config=pivot_config)
+            else:
+                st.info("Không có dữ liệu để lập ma trận.")
 
         with tab_forecast:
             st.markdown("**Mô hình phân bổ & Dự báo năng lực tiết kiệm tháng tới**")
