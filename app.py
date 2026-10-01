@@ -247,54 +247,39 @@ with tab_income:
 # -----------------------------------
 with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
-    st.markdown("💡 **Mẹo:** Cột `amount` (số tiền thực thu) và `trang_thai` được **tính toán hoàn toàn tự động** dựa trên Ngày báo cáo bạn chọn. Bạn chỉ cần điền `base_amount`, `start_date` và `end_date`.")
+    st.markdown("💡 **Mẹo:** Vì các cột `amount` và `trang_thai` đã được cấu hình tự động tính toán trên Google Sheets dựa vào Bảng điều khiển, **bạn chỉ nên chỉnh sửa các thông tin cơ bản (id, name, base_amount, start_date, end_date)**. Hệ thống web chỉ có nhiệm vụ đồng bộ các thông số gốc này lên Sheet.")
     
     df_fixed = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
     
     if df_fixed is not None:
         tong_chi_phi = 0
-        if not df_fixed.empty:
-            # 1. Ép kiểu cột ngày về dạng datetime để so sánh
-            df_fixed['start_date_dt'] = pd.to_datetime(df_fixed['start_date'], errors='coerce')
-            df_fixed['end_date_dt'] = pd.to_datetime(df_fixed['end_date'], errors='coerce')
-            report_date = pd.to_datetime(ngay_bao_cao)
-            
-            # 2. Xây dựng logic tự động cập nhật Trạng thái
-            def check_status(row):
-                if pd.notna(row['end_date_dt']) and report_date > row['end_date_dt']:
-                    return "Đã kết thúc"
-                elif pd.notna(row['start_date_dt']) and report_date < row['start_date_dt']:
-                    return "Chưa bắt đầu"
-                else:
-                    return "Đang hoạt động"
-            
-            df_fixed['trang_thai'] = df_fixed.apply(check_status, axis=1)
-            
-            # 3. Tính toán số tiền thực tế (amount)
-            if "base_amount" in df_fixed.columns:
-                df_fixed["base_amount"] = pd.to_numeric(df_fixed["base_amount"], errors="coerce").fillna(0)
-                # Nếu đang hoạt động thì tính tiền, ngược lại thì bằng 0
-                df_fixed['amount'] = df_fixed.apply(lambda x: x['base_amount'] if x['trang_thai'] == 'Đang hoạt động' else 0, axis=1)
-                tong_chi_phi = df_fixed['amount'].sum()
-                
-            # Xóa các cột datetime tạm sau khi tính xong
-            df_fixed = df_fixed.drop(columns=['start_date_dt', 'end_date_dt'])
         
-        # 4. Hiển thị tổng chi phí theo ngày chốt sổ
+        # Chỉ đọc dữ liệu từ Sheets để hiển thị con số TỔNG (đã được Sheets tính toán sẵn thông qua công thức mảng)
+        if not df_fixed.empty and "amount" in df_fixed.columns:
+            # Lọc bỏ các giá trị trống hoặc lỗi chữ do công thức
+            df_fixed["amount"] = pd.to_numeric(df_fixed["amount"], errors="coerce").fillna(0)
+            tong_chi_phi = df_fixed["amount"].sum()
+            
         st.metric(
-            label=f"TỔNG CHI PHÍ DUY TRÌ TÍNH ĐẾN ({ngay_bao_cao.strftime('%d/%m/%Y')})", 
+            label="TỔNG CHI PHÍ DUY TRÌ THEO NGÀY BÁO CÁO (Đồng bộ từ Google Sheets)", 
             value=f"{int(tong_chi_phi):,} VND"
         )
         st.divider() 
         
-        # 5. Khóa 2 cột tính toán tự động không cho sửa tay
+        # KHÔNG ĐƯA CỘT AMOUNT VÀ TRẠNG THÁI VÀO DATA EDITOR ĐỂ TRÁNH GHI ĐÈ CÔNG THỨC MẢNG
+        # Tách riêng các cột dữ liệu gốc cho phép người dùng chỉnh sửa
+        editable_cols = ["id", "name", "base_amount", "start_date", "end_date"]
+        
+        # Đảm bảo các cột này tồn tại trong file
+        existing_cols = [col for col in editable_cols if col in df_fixed.columns]
+        df_editable = df_fixed[existing_cols]
+        
         edited_df_fixed = st.data_editor(
-            df_fixed,
+            df_editable,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
-            key="editor_fixed",
-            disabled=["amount", "trang_thai"] 
+            key="editor_fixed"
         )
         
         submit_fixed = st.button("💾 Lưu Bảng Chi Phí Cố Định", type="primary", use_container_width=True)
@@ -302,12 +287,35 @@ with tab_fixed:
         if submit_fixed:
             with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
                 try:
-                    conn.update(worksheet="Fixed_Expenses_Base", data=edited_df_fixed)
-                    st.toast("✅ Đã cập nhật thành công cấu trúc chi phí cố định!", icon="🎉")
+                    # LẤY DỮ LIỆU ĐÃ CHỈNH SỬA, NHƯNG PHẢI GHÉP LẠI VỚI CÁC CỘT CÔNG THỨC (NẾU CÓ) ĐỂ BẢO TOÀN CHÚNG
+                    # Cập nhật dữ liệu từ bản chỉnh sửa vào bản gốc
+                    for col in existing_cols:
+                        # Đảm bảo số lượng dòng khớp nhau (trường hợp người dùng add thêm dòng mới)
+                        if len(edited_df_fixed) > len(df_fixed):
+                            # Tạo dòng trống để bổ sung
+                            diff = len(edited_df_fixed) - len(df_fixed)
+                            empty_rows = pd.DataFrame([{c: "" for c in df_fixed.columns}] * diff)
+                            df_fixed = pd.concat([df_fixed, empty_rows], ignore_index=True)
+                        elif len(edited_df_fixed) < len(df_fixed):
+                            # Cắt bớt dòng nếu người dùng xóa
+                            df_fixed = df_fixed.iloc[:len(edited_df_fixed)]
+                            
+                        # Cập nhật cột gốc
+                        df_fixed[col] = edited_df_fixed[col].values
+                    
+                    # QUAN TRỌNG NHẤT: TRƯỚC KHI ĐẨY LÊN SHEET, PHẢI GỠ BỎ CÁC CỘT CHỨA CÔNG THỨC (amount, trang_thai)
+                    # Việc này báo cho Streamlit biết: "Chỉ ghi đè các cột A-E, giữ nguyên cột F, G đang chứa công thức mảng"
+                    cols_to_update = [c for c in df_fixed.columns if c not in ["amount", "trang_thai", "thuc_tra_hien_tai"]]
+                    df_to_push = df_fixed[cols_to_update]
+                    
+                    # Thay vì cập nhật toàn bộ bảng làm xóa công thức, ta chỉ cập nhật các cột Input
+                    conn.update(worksheet="Fixed_Expenses_Base", data=df_to_push)
+                    
+                    st.toast("✅ Đã cập nhật thông số gốc lên Sheets (Công thức ngầm được bảo toàn)!", icon="🎉")
                     st.cache_data.clear()
                     st.rerun()
-                except Exception:
-                    st.error("⚠️ Lỗi mạng hoặc quá tải API. Vui lòng nhấn Lưu lại sau 30 giây!")
+                except Exception as e:
+                    st.error(f"⚠️ Lỗi mạng hoặc quá tải API. Vui lòng nhấn Lưu lại sau 30 giây!")
     else:
         st.info("⏳ Đang đợi kết nối từ Google Sheets...")
 
