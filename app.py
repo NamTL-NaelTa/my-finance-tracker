@@ -9,14 +9,11 @@ import time
 st.set_page_config(page_title="Quản Lý Dòng Tiền", page_icon="💰", layout="centered")
 st.title("💰 Quản Lý Dòng Tiền")
 
-# Khởi tạo bộ đếm để reset form mượt mà
 if "form_reset_key" not in st.session_state:
     st.session_state.form_reset_key = 0
 
-# Kết nối Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Hàm đọc dữ liệu có lớp bảo vệ chống sập (Rate Limit Protection)
 def safe_read_sheet(worksheet_name, ttl=600):
     try:
         return conn.read(worksheet=worksheet_name, ttl=ttl)
@@ -24,7 +21,7 @@ def safe_read_sheet(worksheet_name, ttl=600):
         return None
 
 # ==========================================
-# PHẦN 1: BẢNG ĐIỀU KHIỂN (LUÔN HIỂN THỊ)
+# PHẦN 1: BẢNG ĐIỀU KHIỂN
 # ==========================================
 st.subheader("📊 Trạng thái hiện tại")
 
@@ -48,25 +45,27 @@ if cap_nhat_btn:
         except Exception as e:
             st.error(f"⚠️ Lỗi cập nhật ô B1: {e}")
 
-# Đọc dữ liệu Dashboard
 dashboard_data = safe_read_sheet("Dashboard", ttl=600) 
 
-def format_currency_intl(val):
-    try:
-        return f"{int(float(val)):,}"
-    except (ValueError, TypeError):
-        return val
-
 if dashboard_data is not None:
+    # Áp dụng column_config để định dạng quốc tế cột số 2 của Dashboard
     if len(dashboard_data.columns) > 1:
         col_name = dashboard_data.columns[1]
-        dashboard_data[col_name] = dashboard_data[col_name].apply(format_currency_intl)
-    st.dataframe(dashboard_data, hide_index=True, use_container_width=True)
+        st.dataframe(
+            dashboard_data, 
+            hide_index=True, 
+            use_container_width=True,
+            column_config={
+                col_name: st.column_config.NumberColumn(format="%,.0f")
+            }
+        )
+    else:
+        st.dataframe(dashboard_data, hide_index=True, use_container_width=True)
 else:
     st.warning("⏳ Hệ thống đang quá tải yêu cầu từ Google. Vui lòng nhấn F5 tải lại trang sau 1 phút.")
 
 # ==========================================
-# PHẦN 2: KHU VỰC LÀM VIỆC CHUYÊN SÂU (TABS)
+# PHẦN 2: KHU VỰC LÀM VIỆC CHUYÊN SÂU
 # ==========================================
 st.divider()
 
@@ -153,14 +152,17 @@ with tab_trans:
                     else:
                         st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
         
-        # HIỂN THỊ 5 GIAO DỊCH GẦN NHẤT ĐỂ KIỂM TRA
         st.divider()
         st.write("🕒 **5 Giao dịch gần nhất**")
         df_trans_history = safe_read_sheet("Transactions", ttl=600)
         if df_trans_history is not None and not df_trans_history.empty:
-            # Lấy 5 dòng cuối cùng (mới nhất), đảo ngược để hiển thị mới nhất lên trên
             last_5_trans = df_trans_history.tail(5).iloc[::-1]
-            st.dataframe(last_5_trans, hide_index=True, use_container_width=True)
+            st.dataframe(
+                last_5_trans, 
+                hide_index=True, 
+                use_container_width=True,
+                column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
+            )
         else:
             st.info("Chưa có dữ liệu hoặc đang tải...")
             
@@ -254,12 +256,16 @@ with tab_income:
                 except Exception:
                     st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
                     
-    # HIỂN THỊ 5 KHOẢN THU GẦN NHẤT ĐỂ KIỂM TRA
     st.divider()
     st.write("🕒 **5 Khoản thu gần nhất**")
     if not df_inc_read.empty:
         last_5_inc = df_inc_read.tail(5).iloc[::-1]
-        st.dataframe(last_5_inc, hide_index=True, use_container_width=True)
+        st.dataframe(
+            last_5_inc, 
+            hide_index=True, 
+            use_container_width=True,
+            column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
+        )
     else:
         st.info("Chưa có dữ liệu hoặc đang tải...")
 
@@ -294,7 +300,10 @@ with tab_fixed:
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
-            key="editor_fixed"
+            key="editor_fixed",
+            column_config={
+                "base_amount": st.column_config.NumberColumn("base_amount", format="%,.0f")
+            }
         )
         
         submit_fixed = st.button("💾 Lưu Bảng Chi Phí Cố Định", type="primary", use_container_width=True)
@@ -329,11 +338,16 @@ with tab_fixed:
 # TAB 4: ĐIỀU CHỈNH
 # -----------------------------------
 with tab_adj:
-    st.subheader("⚖️ Lịch sử điều chỉnh ngân sách")
+    st.subheader("⚖️️ Lịch sử điều chỉnh ngân sách")
     st.info("Bảng ghi nhận các khoản phụ thu/giảm trừ vào ngân sách cố định hàng tháng.")
     df_adj = safe_read_sheet("Expense_Adjustments", ttl=600)
     
     if df_adj is not None:
-        st.dataframe(df_adj, hide_index=True, use_container_width=True)
+        st.dataframe(
+            df_adj, 
+            hide_index=True, 
+            use_container_width=True,
+            column_config={"amount": st.column_config.NumberColumn(format="%,.0f")}
+        )
     else:
         st.info("⏳ Đang đợi kết nối từ Google Sheets...")
