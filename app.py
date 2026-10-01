@@ -442,11 +442,11 @@ with tab_income:
         st.info("Chưa có dữ liệu hoặc đang tải...")
 
 # -----------------------------------
-# TAB 3: CHI PHÍ CỐ ĐỊNH (Tích hợp Điều chỉnh)
+# TAB 3: CHI PHÍ CỐ ĐỊNH (BẢO VỆ TUYỆT ĐỐI CỘT CÔNG THỨC)
 # -----------------------------------
 with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
-    st.markdown("💡 **Mẹo:** Các cột `thuc_tra_hien_tai` và `trang_thai` được **tính toán tự động 100% bằng công thức trên Google Sheets** dựa vào mốc Ngày chọn báo cáo. Bạn có thể chỉnh sửa các tham số gốc trực tiếp tại đây.")
+    st.markdown("💡 **Mẹo:** Các cột `thuc_tra_hien_tai` và `trang_thai` được **tính toán tự động 100% bằng công thức trên Google Sheets**. Giao diện web chỉ cho phép chỉnh sửa các tham số gốc.")
     
     df_fixed = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
     
@@ -463,6 +463,7 @@ with tab_fixed:
         )
         st.divider() 
         
+        # Chỉ định rõ các cột gốc cho phép chỉnh sửa trên web, loại trừ hoàn toàn cột tính toán
         editable_cols = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_ti", "ngay_thanh_t"]
         existing_cols = [col for col in editable_cols if col in df_fixed.columns]
         df_editable = df_fixed[existing_cols]
@@ -481,26 +482,34 @@ with tab_fixed:
         submit_fixed = st.button("💾 Lưu Bảng Chi Phí Cố Định", type="primary", use_container_width=True)
         
         if submit_fixed:
-            with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
+            with st.spinner("Đang đồng bộ dữ liệu tham số gốc lên Google Sheets..."):
                 try:
-                    for col in existing_cols:
-                        if len(edited_df_fixed) > len(df_fixed):
-                            diff = len(edited_df_fixed) - len(df_fixed)
-                            empty_rows = pd.DataFrame([{c: "" for c in df_fixed.columns}] * diff)
-                            df_fixed = pd.concat([df_fixed, empty_rows], ignore_index=True)
-                        elif len(edited_df_fixed) < len(df_fixed):
-                            df_fixed = df_fixed.iloc[:len(edited_df_fixed)]
-                            
-                        df_fixed[col] = edited_df_fixed[col].values
+                    # Lấy lại dataframe gốc từ Sheets để giữ nguyên vẹn cấu trúc cột công thức
+                    df_original_full = safe_read_sheet("Fixed_Expenses_Base", ttl=0)
                     
-                    cols_to_update = [c for c in df_fixed.columns if c not in ["thuc_tra_hien_tai", "trang_thai", "amount"]]
-                    df_to_push = df_fixed[cols_to_update]
-                    
-                    conn.update(worksheet="Fixed_Expenses_Base", data=df_to_push)
-                    
-                    st.toast("✅ Đã cập nhật tham số gốc lên Sheets!", icon="🎉")
-                    st.cache_data.clear()
-                    st.rerun()
+                    if df_original_full is not None:
+                        # Cập nhật các dòng dữ liệu chỉnh sửa vào dataframe gốc dựa trên vị trí index
+                        for col in existing_cols:
+                            if col in df_original_full.columns:
+                                # Đồng bộ số lượng dòng nếu có thêm/bớt
+                                if len(edited_df_fixed) > len(df_original_full):
+                                    diff = len(edited_df_fixed) - len(df_original_full)
+                                    empty_rows = pd.DataFrame([{c: "" for c in df_original_full.columns}] * diff)
+                                    df_original_full = pd.concat([df_original_full, empty_rows], ignore_index=True)
+                                elif len(edited_df_fixed) < len(df_original_full):
+                                    df_original_full = df_original_full.iloc[:len(edited_df_fixed)]
+                                    
+                                df_original_full[col] = edited_df_fixed[col].values
+                        
+                        # Ghi đè toàn bộ sheet nhưng các cột công thức (thuc_tra_hien_tai, trang_thai) 
+                        # vẫn nằm trong df_original_full nên không bị mất công thức hay bị xóa trắng.
+                        conn.update(worksheet="Fixed_Expenses_Base", data=df_original_full)
+                        
+                        st.toast("✅ Đã cập nhật tham số gốc, giữ nguyên công thức Sheets!", icon="🎉")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error("⚠️ Không thể đọc dữ liệu gốc từ Sheets để đồng bộ.")
                 except Exception as e:
                     st.error(f"⚠️ Lỗi: {e}")
                     
