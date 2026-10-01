@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 import gspread
 import time
 import plotly.graph_objects as go
@@ -23,7 +23,7 @@ def safe_read_sheet(worksheet_name, ttl=600):
         return None
 
 # ==========================================
-# PHẦN 1: BẢNG ĐIỀU KHIỂN
+# PHẦN 1: BẢNG ĐIỀU KHIỂN & LẤY MỐC BÁO CÁO
 # ==========================================
 st.subheader("📊 Trạng thái hiện tại")
 
@@ -66,7 +66,94 @@ else:
     st.warning("⏳ Hệ thống đang quá tải yêu cầu từ Google. Vui lòng nhấn F5 tải lại trang sau 1 phút.")
 
 # ==========================================
-# KHU VỰC MỚI: PHÂN TÍCH & DỰ BÁO DÒNG TIỀN
+# HÀM PYTHON TÍNH TOÁN CỐ ĐỊNH (THAY THẾ CÔNG THỨC SHEETS)
+# ==========================================
+def calculate_fixed_expenses(df_fixed, df_adj, report_date):
+    if df_fixed is None or df_fixed.empty:
+        return df_fixed
+    
+    rep_dt = pd.to_datetime(report_date)
+    rep_year = rep_dt.year
+    rep_month = rep_dt.month
+    rep_day = rep_dt.day
+    report_mm_yyyy = rep_dt.strftime("%m/%Y")
+
+    thuc_tra_list = []
+    trang_thai_list = []
+
+    for idx, row in df_fixed.iterrows():
+        # Lấy giá trị gốc an toàn
+        base_amt = pd.to_numeric(row.get("base_amount", 0), errors="coerce")
+        if pd.isna(base_amt): base_amt = 0
+
+        ngay_thanh_t = row.get("ngay_thanh_t") # Tương ứng cột J (Payment day)
+        start_date = pd.to_datetime(row.get("start_date"), errors="coerce") # Cột D
+        end_date = pd.to_datetime(row.get("end_date"), errors="coerce") # Cột E
+        chu_ky = str(row.get("chu_ky", "")).strip() # Cột H (Hằng tháng / Hằng năm)
+        thang_thu_ti = pd.to_numeric(row.get("thang_thu_ti"), errors="coerce") # Cột I (Tháng thu tiền hằng năm)
+        item_id = str(row.get("id", "")).strip() # Cột A
+
+        # 1. Tính toán cột trang_thai (Logic: =IF(OR(ISBLANK(E2), E2 >= TODAY()), "Đang hoạt động", "Đã kết thúc"))
+        today_dt = pd.to_datetime(date.today())
+        if pd.isna(end_date) or end_date >= today_dt:
+            trang_thai = "Đang hoạt động"
+        else:
+            trang_thai = "Đã kết thúc"
+        trang_thai_list.append(trang_thai)
+
+        # 2. Tính toán cột thuc_tra_hien_tai 
+        # Logic mô phỏng hàm Excel: Kiểm tra ngày, điều kiện chu kỳ và cộng dồn Expense_Adjustments
+        try:
+            j_val = int(ngay_thanh_t) if not pd.isna(ngay_thanh_t) else None
+        except:
+            j_val = None
+
+        condition_met = False
+        if j_val is not None and rep_day >= j_val:
+            try:
+                pay_date = datetime(rep_year, rep_month, j_val)
+                pay_pd = pd.to_datetime(pay_date)
+                
+                # Kiểm tra start_date & end_date
+                start_ok = pd.isna(start_date) or (pay_pd >= start_date)
+                end_ok = pd.isna(end_date) or (pay_pd <= end_date)
+                
+                # Kiểm tra chu kỳ
+                if chu_ky == "Hằng tháng":
+                    cycle_ok = True
+                elif chu_ky == "Hằng năm":
+                    cycle_ok = (not pd.isna(thang_thu_ti)) and (int(thang_thu_ti) == rep_month)
+                else:
+                    cycle_ok = True # Mặc định nếu không rõ chu kỳ
+
+                if start_ok and end_ok and cycle_ok:
+                    condition_met = True
+            except:
+                pass
+
+        final_amount = 0
+        if condition_met:
+            final_amount = base_amt
+            # Cộng dồn từ bảng Expense_Adjustments nếu có khớp id và tháng báo cáo
+            if df_adj is not None and not df_adj.empty:
+                # Giả định bảng Adjustments có cột id (hoặc B), amount (C), tháng (D dạng MM/yyyy)
+                for _, adj_row in df_adj.iterrows():
+                    adj_id = str(adj_row.get("id", "")).strip()
+                    adj_date = str(adj_row.get("date", "")).strip()
+                    adj_amt = pd.to_numeric(adj_row.get("amount", 0), errors="coerce")
+                    if pd.isna(adj_amt): adj_amt = 0
+
+                    if adj_id == item_id and adj_date == report_mm_yyyy:
+                        final_amount += adj_amt
+
+        thuc_tra_list.append(final_amount)
+
+    df_fixed["thuc_tra_hien_tai"] = thuc_tra_list
+    df_fixed["trang_thai"] = trang_thai_list
+    return df_fixed
+
+# ==========================================
+# KHU VỰC PHÂN TÍCH & DỰ BÁO DÒNG TIỀN
 # ==========================================
 st.divider()
 st.subheader("📈 Phân tích Dữ liệu & Dự báo Dòng tiền")
@@ -75,6 +162,10 @@ try:
     df_trans_ana = safe_read_sheet("Transactions", ttl=600)
     df_inc_ana = safe_read_sheet("Incomes", ttl=600)
     df_fixed_ana = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
+    df_adj_ana = safe_read_sheet("Expense_Adjustments", ttl=600)
+
+    # Tự động gán giá trị tính toán thông minh bằng Python
+    df_fixed_ana = calculate_fixed_expenses(df_fixed_ana, df_adj_ana, ngay_bao_cao)
 
     if df_trans_ana is not None and not df_trans_ana.empty and df_inc_ana is not None and not df_inc_ana.empty:
         df_trans_ana['date'] = pd.to_datetime(df_trans_ana['transaction_date'], format='%m/%d/%Y', errors='coerce')
@@ -96,7 +187,6 @@ try:
         
         chi_co_dinh = 0
         if df_fixed_ana is not None and "thuc_tra_hien_tai" in df_fixed_ana.columns:
-            df_fixed_ana["thuc_tra_hien_tai"] = pd.to_numeric(df_fixed_ana["thuc_tra_hien_tai"], errors="coerce").fillna(0)
             chi_co_dinh = df_fixed_ana["thuc_tra_hien_tai"].sum()
 
         tab_overview, tab_detail, tab_action = st.tabs([
@@ -131,7 +221,6 @@ try:
 
             with col_ratio:
                 st.markdown("**Định chuẩn sức khỏe tài chính**")
-                
                 def classify_need(cat):
                     needs_keywords = ['ăn', 'uống', 'đi lại', 'xăng', 'nhà', 'điện', 'nước', 'sức khỏe', 'y tế', 'bảo hiểm']
                     return "Thiết yếu (Target: 50%)" if any(k in str(cat).lower() for k in needs_keywords) else "Linh hoạt/Mong muốn (Target: 30%)"
@@ -189,7 +278,6 @@ try:
 
         with tab_action:
             st.markdown("**Radar giám sát Dòng tiền & Dự báo**")
-            
             current_day = report_date_dt.day
             days_in_month = calendar.monthrange(report_date_dt.year, report_date_dt.month)[1]
             
@@ -204,7 +292,6 @@ try:
             col_a2.metric("Dự Báo Tiết Kiệm Cuối Tháng", f"{int(du_bao_cuoi_thang):,} ₫", delta=f"Nếu giữ nguyên tốc độ chi tiêu này", delta_color="normal")
             
             st.divider()
-            
             st.markdown("🚨 **Cảnh báo rò rỉ bất thường**")
             
             past_3_months = [
@@ -240,7 +327,6 @@ except Exception as e:
 # ==========================================
 st.divider()
 
-# Thêm tab_category vào danh sách Tabs
 tab_trans, tab_income, tab_fixed, tab_category = st.tabs([
     "🛒 Giao dịch", 
     "💰 Thu nhập", 
@@ -253,7 +339,6 @@ tab_trans, tab_income, tab_fixed, tab_category = st.tabs([
 # -----------------------------------
 with tab_trans:
     st.subheader("📝 Nhập giao dịch mới")
-    
     df_danhmuc = safe_read_sheet("Danh_muc", ttl=600)
     
     if df_danhmuc is not None and not df_danhmuc.empty:
@@ -346,7 +431,6 @@ with tab_trans:
 # -----------------------------------
 with tab_income:
     st.subheader("💵 Ghi nhận thu nhập mới")
-    
     default_incomes = {
         "Lương chính": ["Lương kỳ 1", "Lương kỳ 2"],
         "Thưởng": ["Lương tháng 13", "KPIs"],
@@ -394,7 +478,7 @@ with tab_income:
     
     if submit_inc:
         if so_tien_thu == 0:
-            st.warning("⚠️ Vui lòng nhập số tiền lớn hơn 0!")
+            st.warning("⚠️ Vူ lòng nhập số tiền lớn hơn 0!")
         elif not nguon_thu:
             st.warning("⚠️ Vui lòng nhập nguồn thu!")
         else:
@@ -442,40 +526,40 @@ with tab_income:
         st.info("Chưa có dữ liệu hoặc đang tải...")
 
 # -----------------------------------
-# TAB 3: CHI PHÍ CỐ ĐỊNH (BẢO VỆ TUYỆT ĐỐI CỘT CÔNG THỨC)
+# TAB 3: CHI PHÍ CỐ ĐỊNH (Tích hợp Điều chỉnh & Tính toán tự động)
 # -----------------------------------
 with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
-    st.markdown("💡 **Mẹo:** Các cột `thuc_tra_hien_tai` và `trang_thai` được **tính toán tự động 100% bằng công thức trên Google Sheets**. Giao diện web chỉ cho phép chỉnh sửa các tham số gốc.")
+    st.markdown("💡 **Mẹo:** Các cột `thuc_tra_hien_tai` và `trang_thai` được **tự động tính toán bằng thuật toán Python** bám sát mốc Ngày chọn báo cáo.")
     
-    df_fixed = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
+    df_fixed_raw = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
+    df_adj_tab = safe_read_sheet("Expense_Adjustments", ttl=600)
     
-    if df_fixed is not None:
-        tong_chi_phi = 0
+    if df_fixed_raw is not None:
+        # Tính toán giá trị hiện tại để hiển thị metric và bảng
+        df_fixed_computed = calculate_fixed_expenses(df_fixed_raw.copy(), df_adj_tab, ngay_bao_cao)
         
-        if not df_fixed.empty and "thuc_tra_hien_tai" in df_fixed.columns:
-            df_fixed["thuc_tra_hien_tai"] = pd.to_numeric(df_fixed["thuc_tra_hien_tai"], errors="coerce").fillna(0)
-            tong_chi_phi = df_fixed["thuc_tra_hien_tai"].sum()
+        tong_chi_phi = df_fixed_computed["thuc_tra_hien_tai"].sum() if not df_fixed_computed.empty else 0
             
         st.metric(
-            label="TỔNG THỰC TRẢ THEO NGÀY BÁO CÁO (Đồng bộ từ Google Sheets)", 
+            label="TỔNG THỰC TRẢ THEO NGÀY BÁO CÁO", 
             value=f"{int(tong_chi_phi):,} VND"
         )
         st.divider() 
         
-        # Chỉ định rõ các cột gốc cho phép chỉnh sửa trên web, loại trừ hoàn toàn cột tính toán
-        editable_cols = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_ti", "ngay_thanh_t"]
-        existing_cols = [col for col in editable_cols if col in df_fixed.columns]
-        df_editable = df_fixed[existing_cols]
+        # Cho phép chỉnh sửa toàn bộ các cột tham số gốc
+        editable_cols = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_ti", "ngay_thanh_t", "thuc_tra_hien_tai", "trang_thai"]
+        existing_cols = [col for col in editable_cols if col in df_fixed_computed.columns]
         
         edited_df_fixed = st.data_editor(
-            df_editable,
+            df_fixed_computed[existing_cols],
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
             key="editor_fixed",
             column_config={
-                "base_amount": st.column_config.NumberColumn("base_amount", format="%,.0f")
+                "base_amount": st.column_config.NumberColumn("base_amount", format="%,.0f"),
+                "thuc_tra_hien_tai": st.column_config.NumberColumn("thuc_tra_hien_tai", format="%,.0f"),
             }
         )
         
@@ -484,42 +568,24 @@ with tab_fixed:
         if submit_fixed:
             with st.spinner("Đang đồng bộ dữ liệu tham số gốc lên Google Sheets..."):
                 try:
-                    # Lấy lại dataframe gốc từ Sheets để giữ nguyên vẹn cấu trúc cột công thức
-                    df_original_full = safe_read_sheet("Fixed_Expenses_Base", ttl=0)
+                    # Lọc chỉ lấy các cột gốc cấu hình để đẩy lên (tránh ghi đè lệch cấu trúc)
+                    push_cols = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_ti", "ngay_thanh_t"]
+                    valid_push_cols = [c for c in push_cols if c in edited_df_fixed.columns]
                     
-                    if df_original_full is not None:
-                        # Cập nhật các dòng dữ liệu chỉnh sửa vào dataframe gốc dựa trên vị trí index
-                        for col in existing_cols:
-                            if col in df_original_full.columns:
-                                # Đồng bộ số lượng dòng nếu có thêm/bớt
-                                if len(edited_df_fixed) > len(df_original_full):
-                                    diff = len(edited_df_fixed) - len(df_original_full)
-                                    empty_rows = pd.DataFrame([{c: "" for c in df_original_full.columns}] * diff)
-                                    df_original_full = pd.concat([df_original_full, empty_rows], ignore_index=True)
-                                elif len(edited_df_fixed) < len(df_original_full):
-                                    df_original_full = df_original_full.iloc[:len(edited_df_fixed)]
-                                    
-                                df_original_full[col] = edited_df_fixed[col].values
-                        
-                        # Ghi đè toàn bộ sheet nhưng các cột công thức (thuc_tra_hien_tai, trang_thai) 
-                        # vẫn nằm trong df_original_full nên không bị mất công thức hay bị xóa trắng.
-                        conn.update(worksheet="Fixed_Expenses_Base", data=df_original_full)
-                        
-                        st.toast("✅ Đã cập nhật tham số gốc, giữ nguyên công thức Sheets!", icon="🎉")
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.error("⚠️ Không thể đọc dữ liệu gốc từ Sheets để đồng bộ.")
+                    df_to_push = edited_df_fixed[valid_push_cols].dropna(how="all")
+                    conn.update(worksheet="Fixed_Expenses_Base", data=df_to_push)
+                    
+                    st.toast("✅ Đã cập nhật tham số gốc thành công!", icon="🎉")
+                    st.cache_data.clear()
+                    st.rerun()
                 except Exception as e:
                     st.error(f"⚠️ Lỗi: {e}")
                     
         with st.expander("🛠️ Điều chỉnh ngân sách cố định (Phụ thu / Giảm trừ)"):
             st.markdown("Bảng ghi nhận các khoản tăng/giảm đột xuất cho các gói cước cố định. Bạn có thể thêm/xóa dòng trực tiếp tại đây.")
-            df_adj = safe_read_sheet("Expense_Adjustments", ttl=600)
-            
-            if df_adj is not None:
+            if df_adj_tab is not None:
                 edited_df_adj = st.data_editor(
-                    df_adj,
+                    df_adj_tab,
                     num_rows="dynamic",
                     use_container_width=True,
                     hide_index=True,
@@ -544,11 +610,11 @@ with tab_fixed:
         st.info("⏳ Đang đợi kết nối từ Google Sheets...")
 
 # -----------------------------------
-# TAB 4: QUẢN LÝ DANH MỤC (MỚI)
+# TAB 4: QUẢN LÝ DANH MỤC
 # -----------------------------------
 with tab_category:
     st.subheader("📑 Quản lý Danh mục (Categories & Types)")
-    st.markdown("Thêm, sửa, hoặc xóa các nhóm chi tiêu, khoản chi tiết và mã quy ước trực tiếp tại đây. Chú ý giữ đúng cấu trúc cột để ID được tạo chuẩn xác.")
+    st.markdown("Thêm, sửa, hoặc xóa các nhóm chi tiêu, khoản chi tiết và mã quy ước trực tiếp tại đây.")
     
     df_danhmuc_edit = safe_read_sheet("Danh_muc", ttl=600)
     
@@ -566,7 +632,6 @@ with tab_category:
         if submit_danhmuc:
             with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
                 try:
-                    # Loại bỏ các dòng trống nếu bạn vô tình bấm thêm dòng mà không nhập liệu
                     edited_danhmuc = edited_danhmuc.dropna(how="all")
                     conn.update(worksheet="Danh_muc", data=edited_danhmuc)
                     
