@@ -62,56 +62,6 @@ def safe_read_sheet(worksheet_name, ttl=600):
         return None
 
 # ==========================================
-# PHẦN 1: BẢNG ĐIỀU KHIỂN & LẤY MỐC BÁO CÁO
-# ==========================================
-st.subheader("📊 Trạng thái hiện tại")
-
-col_date, col_btn = st.columns([3, 1])
-with col_date:
-    ngay_bao_cao = st.date_input("📅 Chọn Tháng Báo Cáo (Ngày chốt sổ)", format="DD/MM/YYYY")
-with col_btn:
-    st.write("") 
-    st.write("")
-    cap_nhat_btn = st.button("Cập nhật số liệu", type="secondary", use_container_width=True)
-
-if cap_nhat_btn:
-    with st.spinner("Đang đồng bộ mốc thời gian và tính toán lại dữ liệu..."):
-        try:
-            gc = gspread.service_account_from_dict(st.secrets["connections"]["gsheets"])
-            sh = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
-            worksheet = sh.worksheet("Dashboard")
-            worksheet.update("B1", [[ngay_bao_cao.strftime("%Y-%m-%d")]], value_input_option='USER_ENTERED')
-            st.cache_data.clear()
-            st.rerun() 
-        except Exception as e:
-            st.error(f"⚠️ Lỗi cập nhật ô B1: {e}")
-
-dashboard_data = safe_read_sheet("Dashboard", ttl=600) 
-
-if dashboard_data is not None:
-    if len(dashboard_data.columns) > 1:
-        col_name = dashboard_data.columns[1]
-        if privacy_mode:
-            display_dash = dashboard_data.copy()
-            for col in display_dash.columns:
-                if col != dashboard_data.columns[0]:
-                    display_dash[col] = "🔒 ***"
-            st.dataframe(display_dash, hide_index=True, use_container_width=True)
-        else:
-            st.dataframe(
-                dashboard_data, 
-                hide_index=True, 
-                use_container_width=True,
-                column_config={
-                    col_name: st.column_config.NumberColumn(format="%,.0f")
-                }
-            )
-    else:
-        st.dataframe(dashboard_data, hide_index=True, use_container_width=True)
-else:
-    st.warning("⏳ Hệ thống đang quá tải yêu cầu từ Google. Vui lòng nhấn F5 tải lại trang sau 1 phút.")
-
-# ==========================================
 # HÀM PYTHON TÍNH TOÁN CỐ ĐỊNH CHUẨN XÁC
 # ==========================================
 def calculate_fixed_expenses(df_fixed, df_adj, report_date):
@@ -151,25 +101,30 @@ def calculate_fixed_expenses(df_fixed, df_adj, report_date):
             j_val = None
 
         condition_met = False
-        if j_val is not None and rep_day >= j_val:
-            try:
-                pay_date = datetime(rep_year, rep_month, j_val)
-                pay_pd = pd.to_datetime(pay_date)
-                
-                start_ok = pd.isna(start_date) or (pay_pd >= start_date)
-                end_ok = pd.isna(end_date) or (pay_pd <= end_date)
-                
-                if chu_ky == "Hằng tháng":
-                    cycle_ok = True
-                elif chu_ky == "Hằng năm":
-                    cycle_ok = (not pd.isna(thang_thu_ti)) and (int(thang_thu_ti) == rep_month)
-                else:
-                    cycle_ok = True
+        if j_val is not None:
+            # Thuật toán chống lỗi tháng thiếu ngày (VD: Hạn ngày 30 nhưng tháng 2 chỉ có 28 ngày)
+            last_day_of_month = calendar.monthrange(rep_year, rep_month)[1]
+            actual_pay_day = min(j_val, last_day_of_month)
+            
+            if rep_day >= actual_pay_day:
+                try:
+                    pay_date = datetime(rep_year, rep_month, actual_pay_day)
+                    pay_pd = pd.to_datetime(pay_date)
+                    
+                    start_ok = pd.isna(start_date) or (pay_pd >= start_date)
+                    end_ok = pd.isna(end_date) or (pay_pd <= end_date)
+                    
+                    if chu_ky == "Hằng tháng":
+                        cycle_ok = True
+                    elif chu_ky == "Hằng năm":
+                        cycle_ok = (not pd.isna(thang_thu_ti)) and (int(thang_thu_ti) == rep_month)
+                    else:
+                        cycle_ok = True
 
-                if start_ok and end_ok and cycle_ok:
-                    condition_met = True
-            except:
-                pass
+                    if start_ok and end_ok and cycle_ok:
+                        condition_met = True
+                except:
+                    pass
 
         final_amount = 0
         if condition_met:
@@ -190,237 +145,290 @@ def calculate_fixed_expenses(df_fixed, df_adj, report_date):
     df_fixed["trang_thai"] = trang_thai_list
     return df_fixed
 
+
 # ==========================================
-# KHU VỰC PHÂN TÍCH & DỰ BÁO DÒNG TIỀN
+# GIAO DIỆN CHỌN NGÀY & NÚT CẬP NHẬT
 # ==========================================
-st.divider()
-st.subheader("📈 Phân tích Dữ liệu & Dự báo Dòng tiền")
+st.subheader("📊 Trạng thái hiện tại")
+col_date, col_btn = st.columns([3, 1])
+with col_date:
+    ngay_bao_cao = st.date_input("📅 Chọn Tháng Báo Cáo (Ngày chốt sổ)", format="DD/MM/YYYY")
+with col_btn:
+    st.write("") 
+    st.write("")
+    cap_nhat_btn = st.button("Cập nhật số liệu", type="secondary", use_container_width=True)
 
-try:
-    df_trans_ana = safe_read_sheet("Transactions", ttl=600)
-    df_inc_ana = safe_read_sheet("Incomes", ttl=600)
-    df_fixed_ana = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
-    df_adj_ana = safe_read_sheet("Expense_Adjustments", ttl=600)
+if cap_nhat_btn:
+    with st.spinner("Đang tính toán lại toàn bộ dữ liệu..."):
+        try:
+            gc = gspread.service_account_from_dict(st.secrets["connections"]["gsheets"])
+            sh = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
+            worksheet = sh.worksheet("Dashboard")
+            worksheet.update("B1", [[ngay_bao_cao.strftime("%Y-%m-%d")]], value_input_option='USER_ENTERED')
+        except Exception:
+            pass
+        st.cache_data.clear()
+        st.rerun() 
 
-    df_fixed_ana = calculate_fixed_expenses(df_fixed_ana, df_adj_ana, ngay_bao_cao)
+# ==========================================
+# TRÁI TIM ỨNG DỤNG (DATA ENGINE CHẠY 1 LẦN)
+# ==========================================
+with st.spinner("Đang kết nối cơ sở dữ liệu..."):
+    df_trans_raw = safe_read_sheet("Transactions", ttl=600)
+    df_inc_raw = safe_read_sheet("Incomes", ttl=600)
+    df_fixed_raw = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
+    df_adj_raw = safe_read_sheet("Expense_Adjustments", ttl=600)
+    df_danhmuc_raw = safe_read_sheet("Danh_muc", ttl=600)
 
-    if df_trans_ana is not None and not df_trans_ana.empty and df_inc_ana is not None and not df_inc_ana.empty:
+if df_trans_raw is not None and df_inc_raw is not None and df_fixed_raw is not None:
+    # 1. Tính toán Chi Phí Cố Định
+    df_fixed_computed = calculate_fixed_expenses(df_fixed_raw.copy(), df_adj_raw, ngay_bao_cao)
+    chi_co_dinh = df_fixed_computed["thuc_tra_hien_tai"].sum() if not df_fixed_computed.empty else 0
+
+    # 2. Xử lý Giao dịch & Thu nhập
+    report_dt = pd.to_datetime(ngay_bao_cao)
+    current_month_str = report_dt.strftime('%m/%Y')
+    
+    df_trans_ana = df_trans_raw.copy()
+    df_inc_ana = df_inc_raw.copy()
+
+    tong_chi_thang = 0
+    tong_thu_thang = 0
+    trans_current_month = pd.DataFrame()
+
+    if not df_trans_ana.empty:
         df_trans_ana['date'] = pd.to_datetime(df_trans_ana['transaction_date'], format='%m/%d/%Y', errors='coerce')
         df_trans_ana['Tháng'] = df_trans_ana['date'].dt.strftime('%m/%Y')
         df_trans_ana['amount'] = pd.to_numeric(df_trans_ana['amount'], errors='coerce').fillna(0)
+        trans_current_month = df_trans_ana[df_trans_ana['Tháng'] == current_month_str].copy()
+        tong_chi_thang = abs(trans_current_month['amount'].sum())
 
+    if not df_inc_ana.empty:
         df_inc_ana['date'] = pd.to_datetime(df_inc_ana['received_date'], format='%m/%d/%Y', errors='coerce')
         df_inc_ana['Tháng'] = df_inc_ana['date'].dt.strftime('%m/%Y')
         df_inc_ana['amount'] = pd.to_numeric(df_inc_ana['amount'], errors='coerce').fillna(0)
-        
-        report_date_dt = pd.to_datetime(ngay_bao_cao)
-        current_month_str = report_date_dt.strftime('%m/%Y')
-
-        trans_current_month = df_trans_ana[df_trans_ana['Tháng'] == current_month_str].copy()
         inc_current_month = df_inc_ana[df_inc_ana['Tháng'] == current_month_str].copy()
-        
         tong_thu_thang = inc_current_month['amount'].sum()
-        tong_chi_thang = abs(trans_current_month['amount'].sum())
+
+    khoan_du_hien_tai = tong_thu_thang - tong_chi_thang - chi_co_dinh
+
+    # 3. VẼ DASHBOARD ĐỘC LẬP BẰNG PYTHON (Đã gỡ bỏ sự phụ thuộc Google Sheets)
+    dash_col_name = report_dt.strftime("%d/%m/%Y")
+    dash_df = pd.DataFrame({
+        "Chọn Tháng Báo Cáo:": ["TỔNG THU NHẬP:", "TỔNG CHI CỐ ĐỊNH:", "TỔNG ĐÃ TIÊU/TIẾT KIỆM:", "KHOẢN DƯ HIỆN TẠI:"],
+        dash_col_name: [tong_thu_thang, chi_co_dinh, -tong_chi_thang, khoan_du_hien_tai]
+    })
+
+    if privacy_mode:
+        display_dash = dash_df.copy()
+        display_dash[dash_col_name] = "🔒 ***"
+        st.dataframe(display_dash, hide_index=True, use_container_width=True)
+    else:
+        st.dataframe(
+            dash_df, 
+            hide_index=True, 
+            use_container_width=True,
+            column_config={
+                dash_col_name: st.column_config.NumberColumn(format="%,.0f")
+            }
+        )
+
+    # ==========================================
+    # KHU VỰC PHÂN TÍCH & DỰ BÁO DÒNG TIỀN
+    # ==========================================
+    st.divider()
+    st.subheader("📈 Phân tích Dữ liệu & Dự báo Dòng tiền")
+
+    tab_overview, tab_detail, tab_action = st.tabs([
+        "🌊 Toàn cảnh (Sankey & 50/30/20)", 
+        "🔍 Chi tiết & Lịch sử", 
+        "⚠️ Cảnh báo & Dự báo"
+    ])
+
+    with tab_overview:
+        st.markdown(f"**Dòng chảy tài chính & Cơ cấu chi tiêu (Tháng {current_month_str})**")
+        col_sankey, col_ratio = st.columns([3, 2])
         
-        chi_co_dinh = 0
-        if df_fixed_ana is not None and "thuc_tra_hien_tai" in df_fixed_ana.columns:
-            chi_co_dinh = df_fixed_ana["thuc_tra_hien_tai"].sum()
-
-        tab_overview, tab_detail, tab_action = st.tabs([
-            "🌊 Toàn cảnh (Sankey & 50/30/20)", 
-            "🔍 Chi tiết & Lịch sử", 
-            "⚠️ Cảnh báo & Dự báo"
-        ])
-
-        with tab_overview:
-            st.markdown(f"**Dòng chảy tài chính & Cơ cấu chi tiêu (Tháng {current_month_str})**")
-            col_sankey, col_ratio = st.columns([3, 2])
+        with col_sankey:
+            cat_sums = trans_current_month.groupby('category')['amount'].sum().abs().reset_index()
             
-            with col_sankey:
-                cat_sums = trans_current_month.groupby('category')['amount'].sum().abs().reset_index()
+            if tong_thu_thang > 0 and not cat_sums.empty:
+                labels = ["Tổng Thu"] + cat_sums['category'].tolist() + ["Chi Cố Định", "Tiết Kiệm/Dư"]
+                sources = [0] * (len(cat_sums) + 2)
+                targets = list(range(1, len(labels)))
                 
-                if tong_thu_thang > 0 and not cat_sums.empty:
-                    labels = ["Tổng Thu"] + cat_sums['category'].tolist() + ["Chi Cố Định", "Tiết Kiệm/Dư"]
-                    sources = [0] * (len(cat_sums) + 2)
-                    targets = list(range(1, len(labels)))
-                    
-                    tiet_kiem = tong_thu_thang - tong_chi_thang - chi_co_dinh
-                    values = cat_sums['amount'].tolist() + [chi_co_dinh, max(0, tiet_kiem)]
-                    
-                    fig = go.Figure(data=[go.Sankey(
-                        node = dict(pad = 15, thickness = 20, line = dict(color = "black", width = 0.5), label = labels),
-                        link = dict(source = sources, target = targets, value = values)
-                    )])
-                    fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=10))
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("Chưa đủ dữ liệu Thu/Chi trong tháng này để vẽ biểu đồ dòng chảy.")
-
-            with col_ratio:
-                st.markdown("**Định chuẩn sức khỏe tài chính**")
-                def classify_need(cat):
-                    needs_keywords = ['ăn', 'uống', 'đi lại', 'xăng', 'nhà', 'điện', 'nước', 'sức khỏe', 'y tế', 'bảo hiểm']
-                    return "Thiết yếu (Target: 50%)" if any(k in str(cat).lower() for k in needs_keywords) else "Linh hoạt/Mong muốn (Target: 30%)"
+                tiet_kiem = tong_thu_thang - tong_chi_thang - chi_co_dinh
+                values = cat_sums['amount'].tolist() + [chi_co_dinh, max(0, tiet_kiem)]
                 
-                if not trans_current_month.empty:
-                    trans_current_month['Phân_loại'] = trans_current_month['category'].apply(classify_need)
-                    ratio_df = trans_current_month.groupby('Phân_loại')['amount'].sum().abs().reset_index()
-                    
-                    if chi_co_dinh > 0:
-                        if "Thiết yếu (Target: 50%)" in ratio_df['Phân_loại'].values:
-                            ratio_df.loc[ratio_df['Phân_loại'] == "Thiết yếu (Target: 50%)", 'amount'] += chi_co_dinh
-                        else:
-                            ratio_df.loc[len(ratio_df)] = ["Thiết yếu (Target: 50%)", chi_co_dinh]
-                    
-                    fig_pie = go.Figure(data=[go.Pie(labels=ratio_df['Phân_loại'], values=ratio_df['amount'], hole=.4)])
-                    fig_pie.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=10))
-                    st.plotly_chart(fig_pie, use_container_width=True)
-
-        with tab_detail:
-            khoang_thoi_gian = st.selectbox(
-                "⏳ Chọn thời gian thống kê (tính từ ngày chốt sổ)",
-                ["1 Tháng", "3 Tháng", "6 Tháng", "1 Năm", "Tất cả"]
-            )
-
-            if khoang_thoi_gian == "1 Tháng":
-                start_date = report_date_dt - pd.DateOffset(months=1)
-            elif khoang_thoi_gian == "3 Tháng":
-                start_date = report_date_dt - pd.DateOffset(months=3)
-            elif khoang_thoi_gian == "6 Tháng":
-                start_date = report_date_dt - pd.DateOffset(months=6)
-            elif khoang_thoi_gian == "1 Năm":
-                start_date = report_date_dt - pd.DateOffset(years=1)
+                fig = go.Figure(data=[go.Sankey(
+                    node = dict(pad = 15, thickness = 20, line = dict(color = "black", width = 0.5), label = labels),
+                    link = dict(source = sources, target = targets, value = values)
+                )])
+                fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=10))
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                start_date = None
+                st.info("Chưa đủ dữ liệu Thu/Chi trong tháng này để vẽ biểu đồ dòng chảy.")
 
-            if start_date is not None:
-                mask = (df_trans_ana['date'] >= start_date) & (df_trans_ana['date'] <= report_date_dt)
-                df_filtered = df_trans_ana.loc[mask].copy()
-            else:
-                df_filtered = df_trans_ana.copy()
-
-            if not df_filtered.empty:
-                cat_stats = df_filtered.groupby('category').agg(Số_GD=('id', 'count'), Tổng_tiền=('amount', 'sum')).reset_index()
-                cat_stats['Tổng_tiền_hiển_thị'] = cat_stats['Tổng_tiền'].abs()
+        with col_ratio:
+            st.markdown("**Định chuẩn sức khỏe tài chính**")
+            def classify_need(cat):
+                needs_keywords = ['ăn', 'uống', 'đi lại', 'xăng', 'nhà', 'điện', 'nước', 'sức khỏe', 'y tế', 'bảo hiểm']
+                return "Thiết yếu (Target: 50%)" if any(k in str(cat).lower() for k in needs_keywords) else "Linh hoạt/Mong muốn (Target: 30%)"
+            
+            if not trans_current_month.empty:
+                trans_current_month['Phân_loại'] = trans_current_month['category'].apply(classify_need)
+                ratio_df = trans_current_month.groupby('Phân_loại')['amount'].sum().abs().reset_index()
                 
-                col_c1, col_c2 = st.columns([3, 2])
-                col_c1.bar_chart(cat_stats.sort_values(by='Tổng_tiền_hiển_thị', ascending=False).set_index('category')['Tổng_tiền_hiển_thị'])
-                col_c2.dataframe(cat_stats[['category', 'Số_GD', 'Tổng_tiền']], hide_index=True, column_config={"Tổng_tiền": st.column_config.NumberColumn(format="%,.0f")})
-
-                st.markdown("**Ma trận chi tiêu chi tiết theo tháng**")
-                pivot_df = df_filtered.pivot_table(index='category', columns='Tháng', values='amount', aggfunc='sum', fill_value=0)
-                st.dataframe(pivot_df, use_container_width=True, column_config={c: st.column_config.NumberColumn(format="%,.0f") for c in pivot_df.columns})
-            else:
-                st.info("Không có dữ liệu trong thời gian này.")
-
-        with tab_action:
-            st.markdown("**Radar giám sát Dòng tiền & Dự báo**")
-            current_day = report_date_dt.day
-            days_in_month = calendar.monthrange(report_date_dt.year, report_date_dt.month)[1]
-            
-            run_rate_chi_vat = 0
-            if current_day > 0:
-                run_rate_chi_vat = (tong_chi_thang / current_day) * days_in_month
-            
-            du_bao_cuoi_thang = tong_thu_thang - run_rate_chi_vat - chi_co_dinh
-
-            col_a1, col_a2 = st.columns(2)
-            col_a1.metric("Tốc độ đốt tiền dự kiến (Run Rate)", mask_money(run_rate_chi_vat), delta=f"Chi vặt thực tế {current_day} ngày: {int(tong_chi_thang):,}", delta_color="off")
-            col_a2.metric("Dự Báo Tiết Kiệm Cuối Tháng", mask_money(du_bao_cuoi_thang), delta=f"Nếu giữ nguyên tốc độ chi tiêu này", delta_color="normal")
-            
-            st.divider()
-            st.markdown("🚨 **Cảnh báo rò rỉ bất thường**")
-            
-            past_3_months = [
-                (report_date_dt - pd.DateOffset(months=1)).strftime('%m/%Y'),
-                (report_date_dt - pd.DateOffset(months=2)).strftime('%m/%Y'),
-                (report_date_dt - pd.DateOffset(months=3)).strftime('%m/%Y')
-            ]
-            
-            df_past_3m = df_trans_ana[df_trans_ana['Tháng'].isin(past_3_months)]
-            if not df_past_3m.empty and not trans_current_month.empty:
-                avg_past_3m = df_past_3m.groupby('category')['amount'].sum().abs() / 3
-                curr_month_spent = trans_current_month.groupby('category')['amount'].sum().abs()
+                if chi_co_dinh > 0:
+                    if "Thiết yếu (Target: 50%)" in ratio_df['Phân_loại'].values:
+                        ratio_df.loc[ratio_df['Phân_loại'] == "Thiết yếu (Target: 50%)", 'amount'] += chi_co_dinh
+                    else:
+                        ratio_df.loc[len(ratio_df)] = ["Thiết yếu (Target: 50%)", chi_co_dinh]
                 
-                anomaly_found = False
-                for cat, spent in curr_month_spent.items():
-                    if cat in avg_past_3m and avg_past_3m[cat] > 0:
-                        avg_spent = avg_past_3m[cat]
-                        if spent > avg_spent * 1.4 and (spent - avg_spent) > 500000:
-                            percent_increase = ((spent - avg_spent) / avg_spent) * 100
-                            st.warning(f"⚠️ **{cat}**: Tháng này tiêu {mask_money(spent)} (Tăng **{int(percent_increase)}%** so với trung bình 3 tháng trước).")
-                            anomaly_found = True
-                
-                if not anomaly_found:
-                    st.success("✅ Tuyệt vời! Chưa phát hiện khoản chi vặt nào tăng đột biến so với 3 tháng qua.")
-            else:
-                st.info("Hệ thống cần tích lũy thêm dữ liệu các tháng trước để kích hoạt radar phát hiện bất thường.")
+                fig_pie = go.Figure(data=[go.Pie(labels=ratio_df['Phân_loại'], values=ratio_df['amount'], hole=.4)])
+                fig_pie.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=10))
+                st.plotly_chart(fig_pie, use_container_width=True)
 
-except Exception as e:
-    st.error(f"Lỗi phân tích dữ liệu: {e}")
+    with tab_detail:
+        khoang_thoi_gian = st.selectbox(
+            "⏳ Chọn thời gian thống kê (tính từ ngày chốt sổ)",
+            ["1 Tháng", "3 Tháng", "6 Tháng", "1 Năm", "Tất cả"]
+        )
 
-# ==========================================
-# PHẦN 2: KHU VỰC LÀM VIỆC CHUYÊN SÂU
-# ==========================================
-st.divider()
-
-tab_trans, tab_income, tab_fixed, tab_category = st.tabs([
-    "🛒 Giao dịch", 
-    "💰 Thu nhập", 
-    "🔒 Chi phí cố định",
-    "📑 Danh mục"
-])
-
-# -----------------------------------
-# TAB 1: GIAO DỊCH HÀNG NGÀY
-# -----------------------------------
-with tab_trans:
-    st.subheader("📝 Nhập giao dịch mới")
-    df_danhmuc = safe_read_sheet("Danh_muc", ttl=600)
-    
-    if df_danhmuc is not None and not df_danhmuc.empty:
-        df_danhmuc = df_danhmuc.dropna(how="all")
-        list_categories = df_danhmuc['category'].dropna().unique().tolist()
-        
-        col1, col2 = st.columns(2)
-
-        with col1:
-            ngay = st.date_input("Ngày giao dịch")
-            so_tien = st.number_input("Số tiền (Nhập số ÂM nếu chi tiền)", value=0, step=1000, key=f"amount_{st.session_state.form_reset_key}")
-
-        with col2:
-            phan_loai = st.selectbox("Nhóm chi tiêu (Category)", list_categories)
-            filtered_types = df_danhmuc[df_danhmuc['category'] == phan_loai]['type'].dropna().tolist()
-            filtered_types.append("Khác...")
-            chon_loai = st.selectbox("Khoản chi tiết (Type)", filtered_types)
-
-        if chon_loai == "Khác...":
-            col3, col4 = st.columns(2)
-            with col3:
-                noi_dung = st.text_input("Nhập nội dung mới (VD: Khám răng)", key=f"noidung_{st.session_state.form_reset_key}")
-            with col4:
-                prefix = st.text_input("Nhập mã quy ước ngắn (VD: kr)", key=f"prefix_{st.session_state.form_reset_key}")
+        if khoang_thoi_gian == "1 Tháng":
+            start_date = report_dt - pd.DateOffset(months=1)
+        elif khoang_thoi_gian == "3 Tháng":
+            start_date = report_dt - pd.DateOffset(months=3)
+        elif khoang_thoi_gian == "6 Tháng":
+            start_date = report_dt - pd.DateOffset(months=6)
+        elif khoang_thoi_gian == "1 Năm":
+            start_date = report_dt - pd.DateOffset(years=1)
         else:
-            noi_dung = chon_loai
-            prefix_df = df_danhmuc[(df_danhmuc['category'] == phan_loai) & (df_danhmuc['type'] == chon_loai)]
-            prefix = str(prefix_df['prefix'].values[0]).strip() if not prefix_df.empty else "xx"
+            start_date = None
 
-        submit_trans = st.button("Lưu Giao Dịch", type="primary", use_container_width=True)
+        if start_date is not None:
+            mask = (df_trans_ana['date'] >= start_date) & (df_trans_ana['date'] <= report_dt)
+            df_filtered = df_trans_ana.loc[mask].copy()
+        else:
+            df_filtered = df_trans_ana.copy()
 
-        if submit_trans:
-            if so_tien == 0:
-                st.warning("⚠️ Vui lòng nhập số tiền khác 0!")
-            elif chon_loai == "Khác..." and (not noi_dung or not prefix):
-                st.warning("⚠ Vui lòng nhập đầy đủ Nội dung mới và Mã quy ước!")
+        if not df_filtered.empty:
+            cat_stats = df_filtered.groupby('category').agg(Số_GD=('id', 'count'), Tổng_tiền=('amount', 'sum')).reset_index()
+            cat_stats['Tổng_tiền_hiển_thị'] = cat_stats['Tổng_tiền'].abs()
+            
+            col_c1, col_c2 = st.columns([3, 2])
+            col_c1.bar_chart(cat_stats.sort_values(by='Tổng_tiền_hiển_thị', ascending=False).set_index('category')['Tổng_tiền_hiển_thị'])
+            col_c2.dataframe(cat_stats[['category', 'Số_GD', 'Tổng_tiền']], hide_index=True, column_config={"Tổng_tiền": st.column_config.NumberColumn(format="%,.0f")})
+
+            st.markdown("**Ma trận chi tiêu chi tiết theo tháng**")
+            pivot_df = df_filtered.pivot_table(index='category', columns='Tháng', values='amount', aggfunc='sum', fill_value=0)
+            st.dataframe(pivot_df, use_container_width=True, column_config={c: st.column_config.NumberColumn(format="%,.0f") for c in pivot_df.columns})
+        else:
+            st.info("Không có dữ liệu trong thời gian này.")
+
+    with tab_action:
+        st.markdown("**Radar giám sát Dòng tiền & Dự báo**")
+        current_day = report_dt.day
+        days_in_month = calendar.monthrange(report_dt.year, report_dt.month)[1]
+        
+        run_rate_chi_vat = 0
+        if current_day > 0:
+            run_rate_chi_vat = (tong_chi_thang / current_day) * days_in_month
+        
+        du_bao_cuoi_thang = tong_thu_thang - run_rate_chi_vat - chi_co_dinh
+
+        col_a1, col_a2 = st.columns(2)
+        col_a1.metric("Tốc độ đốt tiền dự kiến (Run Rate)", mask_money(run_rate_chi_vat), delta=f"Chi vặt thực tế {current_day} ngày: {int(tong_chi_thang):,}", delta_color="off")
+        col_a2.metric("Dự Báo Tiết Kiệm Cuối Tháng", mask_money(du_bao_cuoi_thang), delta=f"Nếu giữ nguyên tốc độ chi tiêu này", delta_color="normal")
+        
+        st.divider()
+        st.markdown("🚨 **Cảnh báo rò rỉ bất thường**")
+        
+        past_3_months = [
+            (report_dt - pd.DateOffset(months=1)).strftime('%m/%Y'),
+            (report_dt - pd.DateOffset(months=2)).strftime('%m/%Y'),
+            (report_dt - pd.DateOffset(months=3)).strftime('%m/%Y')
+        ]
+        
+        df_past_3m = df_trans_ana[df_trans_ana['Tháng'].isin(past_3_months)]
+        if not df_past_3m.empty and not trans_current_month.empty:
+            avg_past_3m = df_past_3m.groupby('category')['amount'].sum().abs() / 3
+            curr_month_spent = trans_current_month.groupby('category')['amount'].sum().abs()
+            
+            anomaly_found = False
+            for cat, spent in curr_month_spent.items():
+                if cat in avg_past_3m and avg_past_3m[cat] > 0:
+                    avg_spent = avg_past_3m[cat]
+                    if spent > avg_spent * 1.4 and (spent - avg_spent) > 500000:
+                        percent_increase = ((spent - avg_spent) / avg_spent) * 100
+                        st.warning(f"⚠️ **{cat}**: Tháng này tiêu {mask_money(spent)} (Tăng **{int(percent_increase)}%** so với trung bình 3 tháng trước).")
+                        anomaly_found = True
+            
+            if not anomaly_found:
+                st.success("✅ Tuyệt vời! Chưa phát hiện khoản chi vặt nào tăng đột biến so với 3 tháng qua.")
+        else:
+            st.info("Hệ thống cần tích lũy thêm dữ liệu các tháng trước để kích hoạt radar phát hiện bất thường.")
+
+    # ==========================================
+    # PHẦN 2: KHU VỰC LÀM VIỆC CHUYÊN SÂU
+    # ==========================================
+    st.divider()
+
+    tab_trans, tab_income, tab_fixed, tab_category = st.tabs([
+        "🛒 Giao dịch", 
+        "💰 Thu nhập", 
+        "🔒 Chi phí cố định",
+        "📑 Danh mục"
+    ])
+
+    # -----------------------------------
+    # TAB 1: GIAO DỊCH HÀNG NGÀY
+    # -----------------------------------
+    with tab_trans:
+        st.subheader("📝 Nhập giao dịch mới")
+        df_danhmuc = df_danhmuc_raw.copy() if df_danhmuc_raw is not None else pd.DataFrame()
+        
+        if not df_danhmuc.empty:
+            df_danhmuc = df_danhmuc.dropna(how="all")
+            list_categories = df_danhmuc['category'].dropna().unique().tolist()
+            
+            col1, col2 = st.columns(2)
+
+            with col1:
+                ngay = st.date_input("Ngày giao dịch")
+                so_tien = st.number_input("Số tiền (Nhập số ÂM nếu chi tiền)", value=0, step=1000, key=f"amount_{st.session_state.form_reset_key}")
+
+            with col2:
+                phan_loai = st.selectbox("Nhóm chi tiêu (Category)", list_categories)
+                filtered_types = df_danhmuc[df_danhmuc['category'] == phan_loai]['type'].dropna().tolist()
+                filtered_types.append("Khác...")
+                chon_loai = st.selectbox("Khoản chi tiết (Type)", filtered_types)
+
+            if chon_loai == "Khác...":
+                col3, col4 = st.columns(2)
+                with col3:
+                    noi_dung = st.text_input("Nhập nội dung mới (VD: Khám răng)", key=f"noidung_{st.session_state.form_reset_key}")
+                with col4:
+                    prefix = st.text_input("Nhập mã quy ước ngắn (VD: kr)", key=f"prefix_{st.session_state.form_reset_key}")
             else:
-                with st.spinner("Đang lưu dữ liệu..."):
-                    df_trans = safe_read_sheet("Transactions", ttl=600)
-                    if df_trans is not None:
+                noi_dung = chon_loai
+                prefix_df = df_danhmuc[(df_danhmuc['category'] == phan_loai) & (df_danhmuc['type'] == chon_loai)]
+                prefix = str(prefix_df['prefix'].values[0]).strip() if not prefix_df.empty else "xx"
+
+            submit_trans = st.button("Lưu Giao Dịch", type="primary", use_container_width=True)
+
+            if submit_trans:
+                if so_tien == 0:
+                    st.warning("⚠️ Vui lòng nhập số tiền khác 0!")
+                elif chon_loai == "Khác..." and (not noi_dung or not prefix):
+                    st.warning("⚠ Vui lòng nhập đầy đủ Nội dung mới và Mã quy ước!")
+                else:
+                    with st.spinner("Đang lưu dữ liệu..."):
                         date_str = ngay.strftime("%m/%d/%Y") 
                         yymmdd = ngay.strftime("%y%m%d")
                         
-                        if "transaction_date" in df_trans.columns:
-                            same_day_trans = df_trans[df_trans["transaction_date"] == date_str]
+                        if "transaction_date" in df_trans_raw.columns:
+                            same_day_trans = df_trans_raw[df_trans_raw["transaction_date"] == date_str]
                             stt = len(same_day_trans) + 1
                         else:
                             stt = 1
@@ -436,160 +444,142 @@ with tab_trans:
                             "note": [""]
                         })
                         
-                        updated_df = pd.concat([df_trans, new_row], ignore_index=True)
+                        updated_df = pd.concat([df_trans_raw, new_row], ignore_index=True)
                         conn.update(worksheet="Transactions", data=updated_df)
                         
                         st.session_state.form_reset_key += 1
                         st.toast(f"✅ Đã lưu thành công ID: {new_id}", icon="🎉")
                         st.cache_data.clear()
                         st.rerun()
-                    else:
-                        st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
+            
+            st.divider()
+            st.write("🕒 **5 Giao dịch gần nhất**")
+            if not df_trans_raw.empty:
+                last_5_trans = df_trans_raw.tail(5).iloc[::-1]
+                if privacy_mode:
+                    display_trans = last_5_trans.copy()
+                    display_trans["amount"] = "🔒 ***"
+                    st.dataframe(display_trans, hide_index=True, use_container_width=True)
+                else:
+                    st.dataframe(
+                        last_5_trans, 
+                        hide_index=True, 
+                        use_container_width=True,
+                        column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
+                    )
+                
+        else:
+            st.info("Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
+
+    # -----------------------------------
+    # TAB 2: THU NHẬP
+    # -----------------------------------
+    with tab_income:
+        st.subheader("💵 Ghi nhận thu nhập mới")
+        default_incomes = {
+            "Lương chính": ["Lương kỳ 1", "Lương kỳ 2"],
+            "Thưởng": ["Lương tháng 13", "KPIs"],
+            "Vốn mang sang": ["Tồn tiền kỳ trước"],
+            "Lãi tiết kiệm": []
+        }
         
+        df_inc_read = df_inc_raw.copy() if df_inc_raw is not None else pd.DataFrame(columns=["id", "income_source", "category", "amount", "received_date"])
+        df_inc_read = df_inc_read.dropna(how="all")
+            
+        list_inc_categories = list(default_incomes.keys())
+        if not df_inc_read.empty and 'category' in df_inc_read.columns:
+            sheet_cats = df_inc_read['category'].dropna().unique().tolist()
+            for cat in sheet_cats:
+                if cat not in list_inc_categories:
+                    list_inc_categories.append(cat)
+        
+        col_inc1, col_inc2 = st.columns(2)
+        with col_inc1:
+            ngay_thu = st.date_input("Ngày nhận tiền", key=f"inc_date_{st.session_state.form_reset_key}")
+            so_tien_thu = st.number_input("Số tiền thu (VD: 5000000)", min_value=0, value=0, step=100000, key=f"inc_amount_{st.session_state.form_reset_key}")
+            
+        with col_inc2:
+            loai_thu_nhap = st.selectbox("Nhóm thu nhập (Category)", list_inc_categories, key=f"inc_cat_{st.session_state.form_reset_key}")
+            
+            filtered_sources = default_incomes.get(loai_thu_nhap, []).copy()
+            if not df_inc_read.empty and 'category' in df_inc_read.columns and 'income_source' in df_inc_read.columns:
+                sheet_sources = df_inc_read[df_inc_read['category'] == loai_thu_nhap]['income_source'].dropna().unique().tolist()
+                for src in sheet_sources:
+                    if src not in filtered_sources:
+                        filtered_sources.append(src)
+                
+            filtered_sources.append("Khác...")
+            chon_nguon_thu = st.selectbox("Nguồn thu (Income Source)", filtered_sources, key=f"inc_source_sel_{st.session_state.form_reset_key}")
+            
+        if chon_nguon_thu == "Khác...":
+            nguon_thu = st.text_input("Nhập nguồn thu mới (VD: Bán đồ cũ)", key=f"inc_source_new_{st.session_state.form_reset_key}")
+        else:
+            nguon_thu = chon_nguon_thu
+            
+        submit_inc = st.button("Lưu Thu Nhập", type="primary", use_container_width=True, key="btn_inc")
+        
+        if submit_inc:
+            if so_tien_thu == 0:
+                st.warning("⚠️ Vui lòng nhập số tiền lớn hơn 0!")
+            elif not nguon_thu:
+                st.warning("⚠️ Vui lòng nhập nguồn thu!")
+            else:
+                with st.spinner("Đang lưu dữ liệu..."):
+                    date_str = ngay_thu.strftime("%m/%d/%Y")
+                    yymmdd = ngay_thu.strftime("%y%m%d")
+                    
+                    if "received_date" in df_inc_read.columns:
+                        same_day_inc = df_inc_read[df_inc_read["received_date"] == date_str]
+                        stt = len(same_day_inc) + 1
+                    else:
+                        stt = 1
+                        
+                    new_inc_id = f"inc_{yymmdd}_{stt:02d}"
+                    
+                    new_inc_row = pd.DataFrame({
+                        "id": [new_inc_id],
+                        "income_source": [nguon_thu],
+                        "category": [loai_thu_nhap],
+                        "amount": [so_tien_thu],
+                        "received_date": [date_str]
+                    })
+                    
+                    updated_inc_df = pd.concat([df_inc_read, new_inc_row], ignore_index=True)
+                    try:
+                        conn.update(worksheet="Incomes", data=updated_inc_df)
+                        st.session_state.form_reset_key += 1
+                        st.toast(f"✅ Đã lưu thành công ID: {new_inc_id}", icon="🎉")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception:
+                        st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
+                        
         st.divider()
-        st.write("🕒 **5 Giao dịch gần nhất**")
-        df_trans_history = safe_read_sheet("Transactions", ttl=600)
-        if df_trans_history is not None and not df_trans_history.empty:
-            last_5_trans = df_trans_history.tail(5).iloc[::-1]
+        st.write("🕒 **5 Khoản thu gần nhất**")
+        if not df_inc_read.empty:
+            last_5_inc = df_inc_read.tail(5).iloc[::-1]
             if privacy_mode:
-                display_trans = last_5_trans.copy()
-                display_trans["amount"] = "🔒 ***"
-                st.dataframe(display_trans, hide_index=True, use_container_width=True)
+                display_inc = last_5_inc.copy()
+                display_inc["amount"] = "🔒 ***"
+                st.dataframe(display_inc, hide_index=True, use_container_width=True)
             else:
                 st.dataframe(
-                    last_5_trans, 
+                    last_5_inc, 
                     hide_index=True, 
                     use_container_width=True,
                     column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
                 )
-        else:
-            st.info("Chưa có dữ liệu hoặc đang tải...")
-            
-    else:
-        st.info("⏳ Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
 
-# -----------------------------------
-# TAB 2: THU NHẬP
-# -----------------------------------
-with tab_income:
-    st.subheader("💵 Ghi nhận thu nhập mới")
-    default_incomes = {
-        "Lương chính": ["Lương kỳ 1", "Lương kỳ 2"],
-        "Thưởng": ["Lương tháng 13", "KPIs"],
-        "Vốn mang sang": ["Tồn tiền kỳ trước"],
-        "Lãi tiết kiệm": []
-    }
-    
-    df_inc_read = safe_read_sheet("Incomes", ttl=600)
-    if df_inc_read is None:
-        df_inc_read = pd.DataFrame(columns=["id", "income_source", "category", "amount", "received_date"])
-    else:
-        df_inc_read = df_inc_read.dropna(how="all")
+    # -----------------------------------
+    # TAB 3: CHI PHÍ CỐ ĐỊNH
+    # -----------------------------------
+    with tab_fixed:
+        st.subheader("🏢 Quản lý Chi phí cố định (Base)")
+        st.markdown("💡 **Mẹo:** Giao diện hiển thị đầy đủ toàn bộ các cột tham số và tự động tính toán bằng Python.")
         
-    list_inc_categories = list(default_incomes.keys())
-    if not df_inc_read.empty and 'category' in df_inc_read.columns:
-        sheet_cats = df_inc_read['category'].dropna().unique().tolist()
-        for cat in sheet_cats:
-            if cat not in list_inc_categories:
-                list_inc_categories.append(cat)
-    
-    col_inc1, col_inc2 = st.columns(2)
-    with col_inc1:
-        ngay_thu = st.date_input("Ngày nhận tiền", key=f"inc_date_{st.session_state.form_reset_key}")
-        so_tien_thu = st.number_input("Số tiền thu (VD: 5000000)", min_value=0, value=0, step=100000, key=f"inc_amount_{st.session_state.form_reset_key}")
-        
-    with col_inc2:
-        loai_thu_nhap = st.selectbox("Nhóm thu nhập (Category)", list_inc_categories, key=f"inc_cat_{st.session_state.form_reset_key}")
-        
-        filtered_sources = default_incomes.get(loai_thu_nhap, []).copy()
-        if not df_inc_read.empty and 'category' in df_inc_read.columns and 'income_source' in df_inc_read.columns:
-            sheet_sources = df_inc_read[df_inc_read['category'] == loai_thu_nhap]['income_source'].dropna().unique().tolist()
-            for src in sheet_sources:
-                if src not in filtered_sources:
-                    filtered_sources.append(src)
-            
-        filtered_sources.append("Khác...")
-        chon_nguon_thu = st.selectbox("Nguồn thu (Income Source)", filtered_sources, key=f"inc_source_sel_{st.session_state.form_reset_key}")
-        
-    if chon_nguon_thu == "Khác...":
-        nguon_thu = st.text_input("Nhập nguồn thu mới (VD: Bán đồ cũ)", key=f"inc_source_new_{st.session_state.form_reset_key}")
-    else:
-        nguon_thu = chon_nguon_thu
-        
-    submit_inc = st.button("Lưu Thu Nhập", type="primary", use_container_width=True, key="btn_inc")
-    
-    if submit_inc:
-        if so_tien_thu == 0:
-            st.warning("⚠️ Vui lòng nhập số tiền lớn hơn 0!")
-        elif not nguon_thu:
-            st.warning("⚠️ Vui lòng nhập nguồn thu!")
-        else:
-            with st.spinner("Đang lưu dữ liệu..."):
-                date_str = ngay_thu.strftime("%m/%d/%Y")
-                yymmdd = ngay_thu.strftime("%y%m%d")
-                
-                if "received_date" in df_inc_read.columns:
-                    same_day_inc = df_inc_read[df_inc_read["received_date"] == date_str]
-                    stt = len(same_day_inc) + 1
-                else:
-                    stt = 1
-                    
-                new_inc_id = f"inc_{yymmdd}_{stt:02d}"
-                
-                new_inc_row = pd.DataFrame({
-                    "id": [new_inc_id],
-                    "income_source": [nguon_thu],
-                    "category": [loai_thu_nhap],
-                    "amount": [so_tien_thu],
-                    "received_date": [date_str]
-                })
-                
-                updated_inc_df = pd.concat([df_inc_read, new_inc_row], ignore_index=True)
-                try:
-                    conn.update(worksheet="Incomes", data=updated_inc_df)
-                    st.session_state.form_reset_key += 1
-                    st.toast(f"✅ Đã lưu thành công ID: {new_inc_id}", icon="🎉")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception:
-                    st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
-                    
-    st.divider()
-    st.write("🕒 **5 Khoản thu gần nhất**")
-    if not df_inc_read.empty:
-        last_5_inc = df_inc_read.tail(5).iloc[::-1]
-        if privacy_mode:
-            display_inc = last_5_inc.copy()
-            display_inc["amount"] = "🔒 ***"
-            st.dataframe(display_inc, hide_index=True, use_container_width=True)
-        else:
-            st.dataframe(
-                last_5_inc, 
-                hide_index=True, 
-                use_container_width=True,
-                column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
-            )
-    else:
-        st.info("Chưa có dữ liệu hoặc đang tải...")
-
-# -----------------------------------
-# TAB 3: CHI PHÍ CỐ ĐỊNH
-# -----------------------------------
-with tab_fixed:
-    st.subheader("🏢 Quản lý Chi phí cố định (Base)")
-    st.markdown("💡 **Mẹo:** Giao diện hiển thị đầy đủ toàn bộ các cột tham số, ngày thanh toán, chu kỳ và tự động tính toán hai cột `thuc_tra_hien_tai`, `trang_thai` bằng Python.")
-    
-    df_fixed_raw = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
-    df_adj_tab = safe_read_sheet("Expense_Adjustments", ttl=600)
-    
-    if df_fixed_raw is not None:
-        df_fixed_computed = calculate_fixed_expenses(df_fixed_raw.copy(), df_adj_tab, ngay_bao_cao)
-        
-        tong_chi_phi = df_fixed_computed["thuc_tra_hien_tai"].sum() if not df_fixed_computed.empty else 0
-            
         st.metric(
             label="TỔNG THỰC TRẢ THEO NGÀY BÁO CÁO", 
-            value=mask_money(tong_chi_phi)
+            value=mask_money(chi_co_dinh)
         )
         st.divider() 
         
@@ -617,13 +607,11 @@ with tab_fixed:
         if submit_fixed:
             with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
                 try:
-                    for idx, row in edited_df_fixed.iterrows():
-                        if idx < len(df_fixed_raw):
-                            for col in ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_tien", "ngay_thanh_toan"]:
-                                if col in df_fixed_raw.columns and col in edited_df_fixed.columns:
-                                    df_fixed_raw.loc[idx, col] = row[col]
+                    # Lấy dữ liệu người dùng nhập, tự động tính toán lại và đẩy lên
+                    cols_to_update = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_tien", "ngay_thanh_toan"]
+                    df_to_save = edited_df_fixed[cols_to_update].copy()
                     
-                    df_final_push = calculate_fixed_expenses(df_fixed_raw.copy(), df_adj_tab, ngay_bao_cao)
+                    df_final_push = calculate_fixed_expenses(df_to_save, df_adj_raw, ngay_bao_cao)
                     df_final_push = df_final_push.dropna(how="all")
                     
                     conn.update(worksheet="Fixed_Expenses_Base", data=df_final_push)
@@ -635,10 +623,10 @@ with tab_fixed:
                     st.error(f"⚠️ Lỗi: {e}")
                     
         with st.expander("🛠️ Điều chỉnh ngân sách cố định (Phụ thu / Giảm trừ)"):
-            st.markdown("Bảng ghi nhận các khoản tăng/giảm đột xuất cho các gói cước cố định. Bạn có thể thêm/xóa dòng trực tiếp tại đây.")
-            if df_adj_tab is not None:
+            st.markdown("Bảng ghi nhận các khoản tăng/giảm đột xuất cho các gói cước cố định.")
+            if df_adj_raw is not None:
                 edited_df_adj = st.data_editor(
-                    df_adj_tab,
+                    df_adj_raw,
                     num_rows="dynamic",
                     use_container_width=True,
                     hide_index=True,
@@ -657,41 +645,37 @@ with tab_fixed:
                             st.rerun()
                         except Exception as e:
                             st.error(f"⚠️ Lỗi: {e}")
-            else:
-                st.info("⏳ Đang đợi kết nối từ Google Sheets...")
-    else:
-        st.info("⏳ Đang đợi kết nối từ Google Sheets...")
 
-# -----------------------------------
-# TAB 4: QUẢN LÝ DANH MỤC
-# -----------------------------------
-with tab_category:
-    st.subheader("📑 Quản lý Danh mục (Categories & Types)")
-    st.markdown("Thêm, sửa, hoặc xóa các nhóm chi tiêu, khoản chi tiết và mã quy ước trực tiếp tại đây.")
-    
-    df_danhmuc_edit = safe_read_sheet("Danh_muc", ttl=600)
-    
-    if df_danhmuc_edit is not None:
-        edited_danhmuc = st.data_editor(
-            df_danhmuc_edit,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            key="editor_danhmuc"
-        )
+    # -----------------------------------
+    # TAB 4: QUẢN LÝ DANH MỤC
+    # -----------------------------------
+    with tab_category:
+        st.subheader("📑 Quản lý Danh mục (Categories & Types)")
+        st.markdown("Thêm, sửa, hoặc xóa các nhóm chi tiêu, khoản chi tiết và mã quy ước trực tiếp tại đây.")
         
-        submit_danhmuc = st.button("💾 Lưu Danh Mục", type="primary", use_container_width=True)
+        df_danhmuc_edit = df_danhmuc_raw.copy() if df_danhmuc_raw is not None else pd.DataFrame()
         
-        if submit_danhmuc:
-            with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
-                try:
-                    edited_danhmuc = edited_danhmuc.dropna(how="all")
-                    conn.update(worksheet="Danh_muc", data=edited_danhmuc)
-                    
-                    st.toast("✅ Đã cập nhật Danh mục thành công!", icon="🎉")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"⚠️ Lỗi cập nhật: {e}")
-    else:
-        st.info("⏳ Đang đợi kết nối từ Google Sheets...")
+        if not df_danhmuc_edit.empty:
+            edited_danhmuc = st.data_editor(
+                df_danhmuc_edit,
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True,
+                key="editor_danhmuc"
+            )
+            
+            submit_danhmuc = st.button("💾 Lưu Danh Mục", type="primary", use_container_width=True)
+            
+            if submit_danhmuc:
+                with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
+                    try:
+                        edited_danhmuc = edited_danhmuc.dropna(how="all")
+                        conn.update(worksheet="Danh_muc", data=edited_danhmuc)
+                        
+                        st.toast("✅ Đã cập nhật Danh mục thành công!", icon="🎉")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"⚠️ Lỗi cập nhật: {e}")
+else:
+    st.info("⏳ Đang tải kết nối dữ liệu từ Google Sheets. Vui lòng chờ...")
