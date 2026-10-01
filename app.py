@@ -142,15 +142,27 @@ with tab_trans:
 with tab_income:
     st.subheader("💵 Ghi nhận thu nhập mới")
     
-    # Kéo dữ liệu từ sheet Incomes để tự động bắt các danh mục đã có
+    # 1. TỪ ĐIỂN MẶC ĐỊNH CHO THU NHẬP
+    default_incomes = {
+        "Lương chính": ["Lương kỳ 1", "Lương kỳ 2"],
+        "Thưởng": ["Lương tháng 13", "KPIs"],
+        "Vốn mang sang": ["Tồn tiền kỳ trước"],
+        "Lãi tiết kiệm": []
+    }
+    
+    # Kéo dữ liệu từ sheet Incomes để bổ sung thêm nếu có phát sinh mới
     try:
         df_inc_read = conn.read(worksheet="Incomes", ttl=0).dropna(how="all")
-        list_inc_categories = df_inc_read['category'].dropna().unique().tolist()
-        if not list_inc_categories:
-            list_inc_categories = ["Lương chính", "Thưởng", "Lãi tiết kiệm", "Vốn mang sang"]
     except Exception:
-        list_inc_categories = ["Lương chính", "Thưởng", "Lãi tiết kiệm", "Vốn mang sang"]
         df_inc_read = pd.DataFrame(columns=["id", "income_source", "category", "amount", "received_date"])
+        
+    # Gộp danh mục mặc định và danh mục trên sheet
+    list_inc_categories = list(default_incomes.keys())
+    if not df_inc_read.empty and 'category' in df_inc_read.columns:
+        sheet_cats = df_inc_read['category'].dropna().unique().tolist()
+        for cat in sheet_cats:
+            if cat not in list_inc_categories:
+                list_inc_categories.append(cat)
     
     col_inc1, col_inc2 = st.columns(2)
     with col_inc1:
@@ -160,11 +172,13 @@ with tab_income:
     with col_inc2:
         loai_thu_nhap = st.selectbox("Nhóm thu nhập (Category)", list_inc_categories, key=f"inc_cat_{st.session_state.form_reset_key}")
         
-        # Tự động lọc Nguồn thu dựa trên Category được chọn
+        # Gộp nguồn thu mặc định và nguồn thu đã có trên sheet theo Category
+        filtered_sources = default_incomes.get(loai_thu_nhap, []).copy()
         if not df_inc_read.empty and 'category' in df_inc_read.columns and 'income_source' in df_inc_read.columns:
-            filtered_sources = df_inc_read[df_inc_read['category'] == loai_thu_nhap]['income_source'].dropna().unique().tolist()
-        else:
-            filtered_sources = []
+            sheet_sources = df_inc_read[df_inc_read['category'] == loai_thu_nhap]['income_source'].dropna().unique().tolist()
+            for src in sheet_sources:
+                if src not in filtered_sources:
+                    filtered_sources.append(src)
             
         filtered_sources.append("Khác...")
         chon_nguon_thu = st.selectbox("Nguồn thu (Income Source)", filtered_sources, key=f"inc_source_sel_{st.session_state.form_reset_key}")
