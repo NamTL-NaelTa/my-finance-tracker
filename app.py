@@ -34,9 +34,13 @@ if cap_nhat_btn:
         sh = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
         worksheet = sh.worksheet("Dashboard")
         worksheet.update_acell("B1", ngay_bao_cao.strftime("%m/%d/%Y"))
+        
+        # Xóa cache để cập nhật ngay số liệu B1 mới
+        st.cache_data.clear()
         st.rerun() 
 
-dashboard_data = conn.read(worksheet="Dashboard", ttl=0) 
+# Đọc dữ liệu với ttl=600 (cache 10 phút để tránh lỗi API Quota của Google)
+dashboard_data = conn.read(worksheet="Dashboard", ttl=600) 
 
 def format_currency_intl(val):
     try:
@@ -55,7 +59,6 @@ st.dataframe(dashboard_data, hide_index=True, use_container_width=True)
 # ==========================================
 st.divider()
 
-# Khởi tạo 4 thẻ điều hướng
 tab_trans, tab_income, tab_fixed, tab_adj = st.tabs([
     "🛒 Giao dịch", 
     "💰 Thu nhập", 
@@ -70,7 +73,7 @@ with tab_trans:
     st.subheader("📝 Nhập giao dịch mới")
     
     try:
-        df_danhmuc = conn.read(worksheet="Danh_muc", ttl=0).dropna(how="all")
+        df_danhmuc = conn.read(worksheet="Danh_muc", ttl=600).dropna(how="all")
         list_categories = df_danhmuc['category'].dropna().unique().tolist()
     except Exception as e:
         st.error("⚠ Lỗi: Không tìm thấy sheet 'Danh_muc' hoặc dữ liệu trống.")
@@ -108,7 +111,7 @@ with tab_trans:
             st.warning("⚠ Vui lòng nhập đầy đủ Nội dung mới và Mã quy ước!")
         else:
             with st.spinner("Đang lưu dữ liệu..."):
-                df_trans = conn.read(worksheet="Transactions", ttl=0)
+                df_trans = conn.read(worksheet="Transactions", ttl=600)
                 date_str = ngay.strftime("%m/%d/%Y") 
                 yymmdd = ngay.strftime("%y%m%d")
                 
@@ -134,6 +137,9 @@ with tab_trans:
                 
                 st.session_state.form_reset_key += 1
                 st.toast(f"✅ Đã lưu thành công ID: {new_id}", icon="🎉")
+                
+                # Xóa cache để đảm bảo lần tải sau lấy dữ liệu mới nhất
+                st.cache_data.clear()
                 st.rerun()
 
 # -----------------------------------
@@ -142,7 +148,6 @@ with tab_trans:
 with tab_income:
     st.subheader("💵 Ghi nhận thu nhập mới")
     
-    # 1. TỪ ĐIỂN MẶC ĐỊNH CHO THU NHẬP
     default_incomes = {
         "Lương chính": ["Lương kỳ 1", "Lương kỳ 2"],
         "Thưởng": ["Lương tháng 13", "KPIs"],
@@ -150,13 +155,11 @@ with tab_income:
         "Lãi tiết kiệm": []
     }
     
-    # Kéo dữ liệu từ sheet Incomes để bổ sung thêm nếu có phát sinh mới
     try:
-        df_inc_read = conn.read(worksheet="Incomes", ttl=0).dropna(how="all")
+        df_inc_read = conn.read(worksheet="Incomes", ttl=600).dropna(how="all")
     except Exception:
         df_inc_read = pd.DataFrame(columns=["id", "income_source", "category", "amount", "received_date"])
         
-    # Gộp danh mục mặc định và danh mục trên sheet
     list_inc_categories = list(default_incomes.keys())
     if not df_inc_read.empty and 'category' in df_inc_read.columns:
         sheet_cats = df_inc_read['category'].dropna().unique().tolist()
@@ -172,7 +175,6 @@ with tab_income:
     with col_inc2:
         loai_thu_nhap = st.selectbox("Nhóm thu nhập (Category)", list_inc_categories, key=f"inc_cat_{st.session_state.form_reset_key}")
         
-        # Gộp nguồn thu mặc định và nguồn thu đã có trên sheet theo Category
         filtered_sources = default_incomes.get(loai_thu_nhap, []).copy()
         if not df_inc_read.empty and 'category' in df_inc_read.columns and 'income_source' in df_inc_read.columns:
             sheet_sources = df_inc_read[df_inc_read['category'] == loai_thu_nhap]['income_source'].dropna().unique().tolist()
@@ -221,6 +223,8 @@ with tab_income:
                 
                 st.session_state.form_reset_key += 1
                 st.toast(f"✅ Đã lưu thành công ID: {new_inc_id}", icon="🎉")
+                
+                st.cache_data.clear()
                 st.rerun()
 
 # -----------------------------------
@@ -230,48 +234,42 @@ with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
     st.markdown("Khu vực này hoạt động như một bảng Excel thu nhỏ. Bạn có thể **click đúp vào ô bất kỳ để sửa**, chọn dòng nhấn nút `Delete` để xóa, hoặc cuộn xuống cuối bảng để thêm gói cước mới.")
     
-    # 1. Kéo dữ liệu từ sheet
-    df_fixed = conn.read(worksheet="Fixed_Expenses_Base", ttl=0)
+    df_fixed = conn.read(worksheet="Fixed_Expenses_Base", ttl=600)
     
-    # 2. Xử lý logic tính Tổng chi phí duy trì hàng tháng
     tong_chi_phi = 0
-    # Đảm bảo bảng có dữ liệu và có cột tên là 'amount' (Bạn có thể sửa chữ 'amount' cho khớp với file Sheet)
     if not df_fixed.empty and "amount" in df_fixed.columns:
-        # Ép kiểu dữ liệu cột amount về dạng số (bỏ qua các ô lỗi/trống)
         df_fixed["amount"] = pd.to_numeric(df_fixed["amount"], errors="coerce").fillna(0)
-        # Tính tổng
         tong_chi_phi = df_fixed["amount"].sum()
     
-    # 3. Hiển thị con số Tổng siêu to khổng lồ
     st.metric(
         label="TỔNG CHI PHÍ DUY TRÌ HÀNG THÁNG", 
         value=f"{int(tong_chi_phi):,} VND"
     )
-    st.divider() # Vạch kẻ ngang phân cách
+    st.divider() 
     
-    # 4. Bật tính năng Data Editor siêu việt của Streamlit
     edited_df_fixed = st.data_editor(
         df_fixed,
-        num_rows="dynamic", # Chìa khóa cho phép thêm/xóa dòng tự do
+        num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
         key="editor_fixed"
     )
     
-    # 5. Nút lưu đồng bộ một lần
     submit_fixed = st.button("💾 Lưu Bảng Chi Phí Cố Định", type="primary", use_container_width=True)
     
     if submit_fixed:
         with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
-            # Ghi đè toàn bộ bảng đã chỉnh sửa lên file gốc
             conn.update(worksheet="Fixed_Expenses_Base", data=edited_df_fixed)
             st.toast("✅ Đã cập nhật thành công cấu trúc chi phí cố định!", icon="🎉")
+            
+            st.cache_data.clear()
             st.rerun()
+
 # -----------------------------------
 # TAB 4: ĐIỀU CHỈNH
 # -----------------------------------
 with tab_adj:
     st.subheader("⚖️ Lịch sử điều chỉnh ngân sách")
     st.info("Bảng ghi nhận các khoản phụ thu/giảm trừ vào ngân sách cố định hàng tháng.")
-    df_adj = conn.read(worksheet="Expense_Adjustments", ttl=0)
+    df_adj = conn.read(worksheet="Expense_Adjustments", ttl=600)
     st.dataframe(df_adj, hide_index=True, use_container_width=True)
