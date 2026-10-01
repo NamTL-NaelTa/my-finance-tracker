@@ -64,11 +64,78 @@ else:
     st.warning("⏳ Hệ thống đang quá tải yêu cầu từ Google. Vui lòng nhấn F5 tải lại trang sau 1 phút.")
 
 # ==========================================
+# KHU VỰC MỚI: PHÂN TÍCH & DỰ BÁO DÒNG TIỀN
+# ==========================================
+st.divider()
+st.subheader("📈 Phân tích Dữ liệu & Dự báo Dòng tiền")
+
+try:
+    df_trans_ana = safe_read_sheet("Transactions", ttl=600)
+    df_inc_ana = safe_read_sheet("Incomes", ttl=600)
+    df_fixed_ana = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
+
+    if df_trans_ana is not None and not df_trans_ana.empty and df_inc_ana is not None and not df_inc_ana.empty:
+        df_trans_ana['date'] = pd.to_datetime(df_trans_ana['transaction_date'], format='%m/%d/%Y', errors='coerce')
+        df_trans_ana['Tháng'] = df_trans_ana['date'].dt.strftime('%m/%Y')
+        df_trans_ana['amount'] = pd.to_numeric(df_trans_ana['amount'], errors='coerce').fillna(0)
+
+        df_inc_ana['date'] = pd.to_datetime(df_inc_ana['received_date'], format='%m/%d/%Y', errors='coerce')
+        df_inc_ana['Tháng'] = df_inc_ana['date'].dt.strftime('%m/%Y')
+        df_inc_ana['amount'] = pd.to_numeric(df_inc_ana['amount'], errors='coerce').fillna(0)
+
+        tab_stats, tab_forecast = st.tabs(["📊 Thống kê Chi tiêu", "🔮 Dự báo Tiết kiệm"])
+        
+        with tab_stats:
+            st.markdown("**Tần suất & Tỷ trọng chi tiêu theo danh mục**")
+            cat_stats = df_trans_ana.groupby('category').agg(
+                Số_GD=('id', 'count'),
+                Tổng_tiền=('amount', 'sum')
+            ).reset_index().sort_values(by='Số_GD', ascending=False)
+
+            col_chart, col_table = st.columns([3, 2])
+            with col_chart:
+                st.bar_chart(cat_stats.set_index('category')['Tổng_tiền'])
+            with col_table:
+                st.dataframe(cat_stats, hide_index=True, column_config={"Tổng_tiền": st.column_config.NumberColumn(format="%,.0f")})
+
+            st.markdown("**Ma trận chi tiêu chi tiết theo tháng**")
+            pivot_df = df_trans_ana.pivot_table(index='category', columns='Tháng', values='amount', aggfunc='sum', fill_value=0)
+            pivot_config = {col: st.column_config.NumberColumn(format="%,.0f") for col in pivot_df.columns}
+            st.dataframe(pivot_df, use_container_width=True, column_config=pivot_config)
+
+        with tab_forecast:
+            st.markdown("**Mô hình phân bổ & Dự báo năng lực tiết kiệm tháng tới**")
+            so_thang_thu = df_inc_ana['Tháng'].nunique() or 1
+            so_thang_chi = df_trans_ana['Tháng'].nunique() or 1
+
+            bq_thu_nhap = df_inc_ana['amount'].sum() / so_thang_thu
+            bq_chi_vat = df_trans_ana['amount'].sum() / so_thang_chi
+
+            chi_co_dinh = 0
+            if df_fixed_ana is not None and "thuc_tra_hien_tai" in df_fixed_ana.columns:
+                df_fixed_ana["thuc_tra_hien_tai"] = pd.to_numeric(df_fixed_ana["thuc_tra_hien_tai"], errors="coerce").fillna(0)
+                chi_co_dinh = df_fixed_ana["thuc_tra_hien_tai"].sum()
+
+            du_bao_tiet_kiem = bq_thu_nhap - bq_chi_vat - chi_co_dinh
+
+            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+            col_f1.metric("Tổng Thu TB/Tháng", f"{int(bq_thu_nhap):,} ₫")
+            col_f2.metric("Chi Vặt TB/Tháng", f"{int(bq_chi_vat):,} ₫", delta="Biến phí", delta_color="inverse")
+            col_f3.metric("Chi Cố Định Hiện Tại", f"{int(chi_co_dinh):,} ₫", delta="Định phí", delta_color="inverse")
+            col_f4.metric("DỰ BÁO TIẾT KIỆM", f"{int(du_bao_tiet_kiem):,} ₫", delta="Khoản khả dụng", delta_color="normal")
+            
+            st.info("💡 **Mẹo đầu tư:** Ngay khi nhận lương tháng tới, bạn có thể cân nhắc chuyển ngay số tiền **Dự báo tiết kiệm** này vào một tài khoản sinh lời (hoặc quỹ dự phòng) trước khi bắt đầu chi tiêu.")
+            
+    else:
+        st.info("Đang thu thập dữ liệu giao dịch/thu nhập để chạy mô hình dự báo...")
+except Exception as e:
+    st.error(f"Lỗi phân tích dữ liệu: {e}")
+
+# ==========================================
 # PHẦN 2: KHU VỰC LÀM VIỆC CHUYÊN SÂU
 # ==========================================
 st.divider()
 
-# Rút gọn từ 4 xuống còn 3 Tab chính
 tab_trans, tab_income, tab_fixed = st.tabs([
     "🛒 Giao dịch", 
     "💰 Thu nhập", 
@@ -331,9 +398,6 @@ with tab_fixed:
                 except Exception as e:
                     st.error(f"⚠️ Lỗi: {e}")
                     
-        # ==========================================
-        # GỘP BẢNG ĐIỀU CHỈNH VÀO THANH MỞ RỘNG
-        # ==========================================
         with st.expander("🛠️ Điều chỉnh ngân sách cố định (Phụ thu / Giảm trừ)"):
             st.markdown("Bảng ghi nhận các khoản tăng/giảm đột xuất cho các gói cước cố định. Bạn có thể thêm/xóa dòng trực tiếp tại đây.")
             df_adj = safe_read_sheet("Expense_Adjustments", ttl=600)
