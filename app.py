@@ -4,6 +4,8 @@ import pandas as pd
 from datetime import datetime
 import gspread
 import time
+import plotly.graph_objects as go
+import calendar
 
 # Cấu hình giao diện web
 st.set_page_config(page_title="Quản Lý Dòng Tiền", page_icon="💰", layout="centered")
@@ -75,6 +77,7 @@ try:
     df_fixed_ana = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
 
     if df_trans_ana is not None and not df_trans_ana.empty and df_inc_ana is not None and not df_inc_ana.empty:
+        # 1. TIỀN XỬ LÝ DỮ LIỆU CHUNG
         df_trans_ana['date'] = pd.to_datetime(df_trans_ana['transaction_date'], format='%m/%d/%Y', errors='coerce')
         df_trans_ana['Tháng'] = df_trans_ana['date'].dt.strftime('%m/%Y')
         df_trans_ana['amount'] = pd.to_numeric(df_trans_ana['amount'], errors='coerce').fillna(0)
@@ -82,24 +85,94 @@ try:
         df_inc_ana['date'] = pd.to_datetime(df_inc_ana['received_date'], format='%m/%d/%Y', errors='coerce')
         df_inc_ana['Tháng'] = df_inc_ana['date'].dt.strftime('%m/%Y')
         df_inc_ana['amount'] = pd.to_numeric(df_inc_ana['amount'], errors='coerce').fillna(0)
-
-        tab_stats, tab_forecast = st.tabs(["📊 Thống kê Chi tiêu", "🔮 Dự báo Tiết kiệm"])
         
-        with tab_stats:
-            col_filter, _ = st.columns([2, 3])
-            with col_filter:
-                khoang_thoi_gian = st.selectbox(
-                    "⏳ Chọn thời gian thống kê (tính từ ngày chốt sổ)",
-                    ["1 Tuần", "2 Tuần", "1 Tháng", "3 Tháng", "6 Tháng", "1 Năm", "Tất cả"]
-                )
+        report_date_dt = pd.to_datetime(ngay_bao_cao)
+        current_month_str = report_date_dt.strftime('%m/%Y')
 
-            # Xác định mốc thời gian bắt đầu dựa trên lựa chọn
-            report_date_dt = pd.to_datetime(ngay_bao_cao)
-            if khoang_thoi_gian == "1 Tuần":
-                start_date = report_date_dt - pd.DateOffset(weeks=1)
-            elif khoang_thoi_gian == "2 Tuần":
-                start_date = report_date_dt - pd.DateOffset(weeks=2)
-            elif khoang_thoi_gian == "1 Tháng":
+        # Giao dịch trong tháng báo cáo
+        trans_current_month = df_trans_ana[df_trans_ana['Tháng'] == current_month_str].copy()
+        inc_current_month = df_inc_ana[df_inc_ana['Tháng'] == current_month_str].copy()
+        
+        tong_thu_thang = inc_current_month['amount'].sum()
+        tong_chi_thang = abs(trans_current_month['amount'].sum())
+        
+        chi_co_dinh = 0
+        if df_fixed_ana is not None and "thuc_tra_hien_tai" in df_fixed_ana.columns:
+            df_fixed_ana["thuc_tra_hien_tai"] = pd.to_numeric(df_fixed_ana["thuc_tra_hien_tai"], errors="coerce").fillna(0)
+            chi_co_dinh = df_fixed_ana["thuc_tra_hien_tai"].sum()
+
+        # QUY HOẠCH UX TỐI ƯU: 3 TAB CHỨC NĂNG
+        tab_overview, tab_detail, tab_action = st.tabs([
+            "🌊 Toàn cảnh (Sankey & 50/30/20)", 
+            "🔍 Chi tiết & Lịch sử", 
+            "⚠️ Cảnh báo & Dự báo"
+        ])
+
+        # ==========================================
+        # TAB 1: BỨC TRANH TOÀN CẢNH (OVERVIEW)
+        # ==========================================
+        with tab_overview:
+            st.markdown(f"**Dòng chảy tài chính & Cơ cấu chi tiêu (Tháng {current_month_str})**")
+            col_sankey, col_ratio = st.columns([3, 2])
+            
+            with col_sankey:
+                # VẼ BẢN ĐỒ DÒNG CHẢY (SANKEY DIAGRAM)
+                cat_sums = trans_current_month.groupby('category')['amount'].sum().abs().reset_index()
+                
+                if tong_thu_thang > 0 and not cat_sums.empty:
+                    labels = ["Tổng Thu"] + cat_sums['category'].tolist() + ["Chi Cố Định", "Tiết Kiệm/Dư"]
+                    
+                    # Logic Node: Nguồn (Thu) -> Đích (Các khoản chi & Tiết kiệm)
+                    sources = [0] * (len(cat_sums) + 2)
+                    targets = list(range(1, len(labels)))
+                    
+                    tiet_kiem = tong_thu_thang - tong_chi_thang - chi_co_dinh
+                    values = cat_sums['amount'].tolist() + [chi_co_dinh, max(0, tiet_kiem)]
+                    
+                    fig = go.Figure(data=[go.Sankey(
+                        node = dict(pad = 15, thickness = 20, line = dict(color = "black", width = 0.5), label = labels),
+                        link = dict(source = sources, target = targets, value = values)
+                    )])
+                    fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=10))
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Chưa đủ dữ liệu Thu/Chi trong tháng này để vẽ biểu đồ dòng chảy.")
+
+            with col_ratio:
+                # MÔ HÌNH PHÂN RÃ NEED VS WANT (50/30/20)
+                st.markdown("**Định chuẩn sức khỏe tài chính**")
+                
+                # Hàm phân loại cơ bản
+                def classify_need(cat):
+                    needs_keywords = ['ăn', 'uống', 'đi lại', 'xăng', 'nhà', 'điện', 'nước', 'sức khỏe', 'y tế', 'bảo hiểm']
+                    return "Thiết yếu (Target: 50%)" if any(k in str(cat).lower() for k in needs_keywords) else "Linh hoạt/Mong muốn (Target: 30%)"
+                
+                if not trans_current_month.empty:
+                    trans_current_month['Phân_loại'] = trans_current_month['category'].apply(classify_need)
+                    ratio_df = trans_current_month.groupby('Phân_loại')['amount'].sum().abs().reset_index()
+                    
+                    # Thêm chi cố định vào Thiết yếu
+                    if chi_co_dinh > 0:
+                        if "Thiết yếu (Target: 50%)" in ratio_df['Phân_loại'].values:
+                            ratio_df.loc[ratio_df['Phân_loại'] == "Thiết yếu (Target: 50%)", 'amount'] += chi_co_dinh
+                        else:
+                            ratio_df.loc[len(ratio_df)] = ["Thiết yếu (Target: 50%)", chi_co_dinh]
+                    
+                    # Vẽ biểu đồ tròn rỗng (Donut Chart)
+                    fig_pie = go.Figure(data=[go.Pie(labels=ratio_df['Phân_loại'], values=ratio_df['amount'], hole=.4)])
+                    fig_pie.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=10))
+                    st.plotly_chart(fig_pie, use_container_width=True)
+
+        # ==========================================
+        # TAB 2: SO CHI TIẾT (Pivot & Bar)
+        # ==========================================
+        with tab_detail:
+            khoang_thoi_gian = st.selectbox(
+                "⏳ Chọn thời gian thống kê (tính từ ngày chốt sổ)",
+                ["1 Tháng", "3 Tháng", "6 Tháng", "1 Năm", "Tất cả"]
+            )
+
+            if khoang_thoi_gian == "1 Tháng":
                 start_date = report_date_dt - pd.DateOffset(months=1)
             elif khoang_thoi_gian == "3 Tháng":
                 start_date = report_date_dt - pd.DateOffset(months=3)
@@ -110,76 +183,79 @@ try:
             else:
                 start_date = None
 
-            # Lọc dữ liệu giao dịch theo khoảng thời gian
             if start_date is not None:
                 mask = (df_trans_ana['date'] >= start_date) & (df_trans_ana['date'] <= report_date_dt)
-                df_filtered = df_trans_ana.loc[mask]
+                df_filtered = df_trans_ana.loc[mask].copy()
             else:
-                df_filtered = df_trans_ana
+                df_filtered = df_trans_ana.copy()
 
-            st.markdown(f"**Tần suất & Tỷ trọng chi tiêu ({khoang_thoi_gian})**")
             if not df_filtered.empty:
-                cat_stats = df_filtered.groupby('category').agg(
-                    Số_GD=('id', 'count'),
-                    Tổng_tiền=('amount', 'sum')
-                ).reset_index().sort_values(by='Số_GD', ascending=False)
-
-                # Lấy giá trị tuyệt đối để biểu đồ hiển thị cột số dương trực quan
+                cat_stats = df_filtered.groupby('category').agg(Số_GD=('id', 'count'), Tổng_tiền=('amount', 'sum')).reset_index()
                 cat_stats['Tổng_tiền_hiển_thị'] = cat_stats['Tổng_tiền'].abs()
+                
+                col_c1, col_c2 = st.columns([3, 2])
+                col_c1.bar_chart(cat_stats.sort_values(by='Tổng_tiền_hiển_thị', ascending=False).set_index('category')['Tổng_tiền_hiển_thị'])
+                col_c2.dataframe(cat_stats[['category', 'Số_GD', 'Tổng_tiền']], hide_index=True, column_config={"Tổng_tiền": st.column_config.NumberColumn(format="%,.0f")})
 
-                col_chart, col_table = st.columns([3, 2])
-                with col_chart:
-                    st.bar_chart(cat_stats.set_index('category')['Tổng_tiền_hiển_thị'])
-                with col_table:
-                    # Ẩn cột tính toán phụ, chỉ hiển thị số gốc
-                    st.dataframe(
-                        cat_stats[['category', 'Số_GD', 'Tổng_tiền']], 
-                        hide_index=True, 
-                        column_config={"Tổng_tiền": st.column_config.NumberColumn(format="%,.0f")}
-                    )
-            else:
-                st.info("Không có dữ liệu giao dịch trong khoảng thời gian này.")
-
-            st.markdown("**Ma trận chi tiêu chi tiết theo tháng**")
-            if not df_filtered.empty:
+                st.markdown("**Ma trận chi tiêu chi tiết theo tháng**")
                 pivot_df = df_filtered.pivot_table(index='category', columns='Tháng', values='amount', aggfunc='sum', fill_value=0)
-                pivot_config = {col: st.column_config.NumberColumn(format="%,.0f") for col in pivot_df.columns}
-                st.dataframe(pivot_df, use_container_width=True, column_config=pivot_config)
+                st.dataframe(pivot_df, use_container_width=True, column_config={c: st.column_config.NumberColumn(format="%,.0f") for c in pivot_df.columns})
             else:
-                st.info("Không có dữ liệu để lập ma trận.")
+                st.info("Không có dữ liệu trong thời gian này.")
 
-        with tab_forecast:
-            st.markdown("**Mô hình phân bổ & Dự báo năng lực tiết kiệm tháng tới**")
-            so_thang_thu = df_inc_ana['Tháng'].nunique() or 1
-            so_thang_chi = df_trans_ana['Tháng'].nunique() or 1
+        # ==========================================
+        # TAB 3: CẢNH BÁO & DỰ BÁO (ACTIONABLE)
+        # ==========================================
+        with tab_action:
+            st.markdown("**Radar giám sát Dòng tiền & Dự báo**")
+            
+            # TÍNH TOÁN RUN RATE (Tốc độ đốt tiền)
+            current_day = report_date_dt.day
+            days_in_month = calendar.monthrange(report_date_dt.year, report_date_dt.month)[1]
+            
+            run_rate_chi_vat = 0
+            if current_day > 0:
+                run_rate_chi_vat = (tong_chi_thang / current_day) * days_in_month
+            
+            du_bao_cuoi_thang = tong_thu_thang - run_rate_chi_vat - chi_co_dinh
 
-            bq_thu_nhap = df_inc_ana['amount'].sum() / so_thang_thu
+            col_a1, col_a2 = st.columns(2)
+            col_a1.metric("Tốc độ đốt tiền dự kiến (Run Rate)", f"{int(run_rate_chi_vat):,} ₫", delta=f"Chi vặt thực tế {current_day} ngày: {int(tong_chi_thang):,}", delta_color="off")
+            col_a2.metric("Dự Báo Tiết Kiệm Cuối Tháng", f"{int(du_bao_cuoi_thang):,} ₫", delta=f"Nếu giữ nguyên tốc độ chi tiêu này", delta_color="normal")
             
-            # Lấy giá trị tuyệt đối để hiển thị số dương cho dễ đọc
-            bq_chi_vat = abs(df_trans_ana['amount'].sum() / so_thang_chi)
+            st.divider()
+            
+            # HỆ THỐNG PHÁT HIỆN BẤT THƯỜNG (ANOMALY DETECTION)
+            st.markdown("🚨 **Cảnh báo rò rỉ bất thường**")
+            
+            # So sánh tháng hiện tại với trung bình 3 tháng trước đó
+            past_3_months = [
+                (report_date_dt - pd.DateOffset(months=1)).strftime('%m/%Y'),
+                (report_date_dt - pd.DateOffset(months=2)).strftime('%m/%Y'),
+                (report_date_dt - pd.DateOffset(months=3)).strftime('%m/%Y')
+            ]
+            
+            df_past_3m = df_trans_ana[df_trans_ana['Tháng'].isin(past_3_months)]
+            if not df_past_3m.empty and not trans_current_month.empty:
+                # Tính trung bình chi tiêu mỗi nhóm trong 3 tháng qua
+                avg_past_3m = df_past_3m.groupby('category')['amount'].sum().abs() / 3
+                curr_month_spent = trans_current_month.groupby('category')['amount'].sum().abs()
+                
+                anomaly_found = False
+                for cat, spent in curr_month_spent.items():
+                    if cat in avg_past_3m and avg_past_3m[cat] > 0:
+                        avg_spent = avg_past_3m[cat]
+                        # Bất thường nếu tiêu vượt 40% so với trung bình và số tiền vượt lớn hơn 500k
+                        if spent > avg_spent * 1.4 and (spent - avg_spent) > 500000:
+                            percent_increase = ((spent - avg_spent) / avg_spent) * 100
+                            st.warning(f"⚠️ **{cat}**: Tháng này tiêu {int(spent):,}đ (Tăng **{int(percent_increase)}%** so với trung bình 3 tháng trước).")
+                            anomaly_found = True
+                
+                if not anomaly_found:
+                    st.success("✅ Tuyệt vời! Chưa phát hiện khoản chi vặt nào tăng đột biến so với 3 tháng qua.")
+            else:
+                st.info("Hệ thống cần tích lũy thêm dữ liệu các tháng trước để kích hoạt radar phát hiện bất thường.")
 
-            chi_co_dinh = 0
-            if df_fixed_ana is not None and "thuc_tra_hien_tai" in df_fixed_ana.columns:
-                df_fixed_ana["thuc_tra_hien_tai"] = pd.to_numeric(df_fixed_ana["thuc_tra_hien_tai"], errors="coerce").fillna(0)
-                chi_co_dinh = df_fixed_ana["thuc_tra_hien_tai"].sum()
-
-            du_bao_tiet_kiem = bq_thu_nhap - bq_chi_vat - chi_co_dinh
-
-            # Chia lưới 2x2 để con số không bị cắt cụt
-            col_f1, col_f2 = st.columns(2)
-            col_f1.metric("Tổng Thu TB/Tháng", f"{int(bq_thu_nhap):,} ₫")
-            col_f2.metric("Chi Vặt TB/Tháng", f"{int(bq_chi_vat):,} ₫", delta="- Biến phí", delta_color="inverse")
-            
-            st.write("") # Dòng trống tạo khoảng nghỉ
-            
-            col_f3, col_f4 = st.columns(2)
-            col_f3.metric("Chi Cố Định Hiện Tại", f"{int(chi_co_dinh):,} ₫", delta="- Định phí", delta_color="inverse")
-            col_f4.metric("DỰ BÁO TIẾT KIỆM", f"{int(du_bao_tiet_kiem):,} ₫", delta="+ Khoản khả dụng", delta_color="normal")
-            
-            st.info("💡 **Mẹo đầu tư:** Ngay khi nhận lương tháng tới, bạn có thể cân nhắc chuyển ngay số tiền **Dự báo tiết kiệm** này vào một tài khoản sinh lời (hoặc quỹ dự phòng) trước khi bắt đầu chi tiêu.")
-            
-    else:
-        st.info("Đang thu thập dữ liệu giao dịch/thu nhập để chạy mô hình dự báo...")
 except Exception as e:
     st.error(f"Lỗi phân tích dữ liệu: {e}")
 
