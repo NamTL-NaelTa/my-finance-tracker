@@ -9,6 +9,47 @@ import calendar
 
 # Cấu hình giao diện web
 st.set_page_config(page_title="Quản Lý Dòng Tiền", page_icon="💰", layout="centered")
+
+# ==========================================
+# BẢO MẬT GIẢI PHÁP 1: MÀN HÌNH ĐĂNG NHẬP
+# ==========================================
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔒 Xác thực bảo mật")
+    st.markdown("Vui lòng nhập mật khẩu để truy cập ứng dụng quản lý tài chính cá nhân.")
+    
+    password_input = st.text_input("Mật khẩu truy cập", type="password")
+    if st.button("Đăng nhập", type="primary", use_container_width=True):
+        # Lấy mật khẩu từ secrets, mặc định là "123456" nếu chưa cấu hình
+        correct_password = st.secrets.get("passwords", {}).get("app_password", "123456")
+        if password_input == correct_password:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("⚠️ Mật khẩu không chính xác. Vui lòng thử lại!")
+    st.stop()  # Dừng toàn bộ code bên dưới nếu chưa đăng nhập thành công
+
+# ==========================================
+# BẢO MẬT GIẢI PHÁP 3: THANH CÔNG CỤ & PRIVACY MODE
+# ==========================================
+with st.sidebar:
+    st.markdown("### ⚙️ Cài đặt hệ thống")
+    privacy_mode = st.toggle("👁️ Chế độ riêng tư (Ẩn số tiền)", value=False)
+    if st.button("Đăng xuất", type="secondary"):
+        st.session_state.authenticated = False
+        st.rerun()
+
+# Hàm hỗ trợ hiển thị số tiền tùy thuộc vào Chế độ riêng tư
+def mask_money(amount):
+    if privacy_mode:
+        return "🔒 *** ₫"
+    try:
+        return f"{int(amount):,} ₫"
+    except:
+        return f"{amount:,} ₫" if isinstance(amount, (int, float)) else str(amount)
+
 st.title("💰 Quản Lý Dòng Tiền")
 
 if "form_reset_key" not in st.session_state:
@@ -52,14 +93,22 @@ dashboard_data = safe_read_sheet("Dashboard", ttl=600)
 if dashboard_data is not None:
     if len(dashboard_data.columns) > 1:
         col_name = dashboard_data.columns[1]
-        st.dataframe(
-            dashboard_data, 
-            hide_index=True, 
-            use_container_width=True,
-            column_config={
-                col_name: st.column_config.NumberColumn(format="%,.0f")
-            }
-        )
+        # Nếu bật Privacy mode, làm ẩn dữ liệu số trên bảng Dashboard
+        if privacy_mode:
+            display_dash = dashboard_data.copy()
+            for col in display_dash.columns:
+                if col != dashboard_data.columns[0]:
+                    display_dash[col] = "🔒 ***"
+            st.dataframe(display_dash, hide_index=True, use_container_width=True)
+        else:
+            st.dataframe(
+                dashboard_data, 
+                hide_index=True, 
+                use_container_width=True,
+                column_config={
+                    col_name: st.column_config.NumberColumn(format="%,.0f")
+                }
+            )
     else:
         st.dataframe(dashboard_data, hide_index=True, use_container_width=True)
 else:
@@ -92,7 +141,6 @@ def calculate_fixed_expenses(df_fixed, df_adj, report_date):
         thang_thu_ti = pd.to_numeric(row.get("thang_thu_tien"), errors="coerce")
         item_id = str(row.get("id", "")).strip()
 
-        # Tính toán cột trang_thai
         today_dt = pd.to_datetime(date.today())
         if pd.isna(end_date) or end_date >= today_dt:
             trang_thai = "Đang hoạt động"
@@ -100,7 +148,6 @@ def calculate_fixed_expenses(df_fixed, df_adj, report_date):
             trang_thai = "Đã kết thúc"
         trang_thai_list.append(trang_thai)
 
-        # Tính toán cột thuc_tra_hien_tai
         try:
             j_val = int(ngay_thanh_t) if not pd.isna(ngay_thanh_t) else None
         except:
@@ -281,8 +328,8 @@ try:
             du_bao_cuoi_thang = tong_thu_thang - run_rate_chi_vat - chi_co_dinh
 
             col_a1, col_a2 = st.columns(2)
-            col_a1.metric("Tốc độ đốt tiền dự kiến (Run Rate)", f"{int(run_rate_chi_vat):,} ₫", delta=f"Chi vặt thực tế {current_day} ngày: {int(tong_chi_thang):,}", delta_color="off")
-            col_a2.metric("Dự Báo Tiết Kiệm Cuối Tháng", f"{int(du_bao_cuoi_thang):,} ₫", delta=f"Nếu giữ nguyên tốc độ chi tiêu này", delta_color="normal")
+            col_a1.metric("Tốc độ đốt tiền dự kiến (Run Rate)", mask(run_rate_chi_vat), delta=f"Chi vặt thực tế {current_day} ngày: {int(tong_chi_thang):,}", delta_color="off")
+            col_a2.metric("Dự Báo Tiết Kiệm Cuối Tháng", mask(du_bao_cuoi_thang), delta=f"Nếu giữ nguyên tốc độ chi tiêu này", delta_color="normal")
             
             st.divider()
             st.markdown("🚨 **Cảnh báo rò rỉ bất thường**")
@@ -304,7 +351,7 @@ try:
                         avg_spent = avg_past_3m[cat]
                         if spent > avg_spent * 1.4 and (spent - avg_spent) > 500000:
                             percent_increase = ((spent - avg_spent) / avg_spent) * 100
-                            st.warning(f"⚠️ **{cat}**: Tháng này tiêu {int(spent):,}đ (Tăng **{int(percent_increase)}%** so với trung bình 3 tháng trước).")
+                            st.warning(f"⚠️ **{cat}**: Tháng này tiêu {mask(spent)} (Tăng **{int(percent_increase)}%** so với trung bình 3 tháng trước).")
                             anomaly_found = True
                 
                 if not anomaly_found:
@@ -407,17 +454,22 @@ with tab_trans:
         df_trans_history = safe_read_sheet("Transactions", ttl=600)
         if df_trans_history is not None and not df_trans_history.empty:
             last_5_trans = df_trans_history.tail(5).iloc[::-1]
-            st.dataframe(
-                last_5_trans, 
-                hide_index=True, 
-                use_container_width=True,
-                column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
-            )
+            if privacy_mode:
+                display_trans = last_5_trans.copy()
+                display_trans["amount"] = "🔒 ***"
+                st.dataframe(display_trans, hide_index=True, use_container_width=True)
+            else:
+                st.dataframe(
+                    last_5_trans, 
+                    hide_index=True, 
+                    use_container_width=True,
+                    column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
+                )
         else:
             st.info("Chưa có dữ liệu hoặc đang tải...")
             
     else:
-        st.info("⏳ Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
+        st.info("Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
 
 # -----------------------------------
 # TAB 2: THU NHẬP
@@ -473,7 +525,7 @@ with tab_income:
         if so_tien_thu == 0:
             st.warning("⚠️ Vui lòng nhập số tiền lớn hơn 0!")
         elif not nguon_thu:
-            st.warning("⚠️️ Vui lòng nhập nguồn thu!")
+            st.warning("⚠️ Vui lòng nhập nguồn thu!")
         else:
             with st.spinner("Đang lưu dữ liệu..."):
                 date_str = ngay_thu.strftime("%m/%d/%Y")
@@ -509,17 +561,22 @@ with tab_income:
     st.write("🕒 **5 Khoản thu gần nhất**")
     if not df_inc_read.empty:
         last_5_inc = df_inc_read.tail(5).iloc[::-1]
-        st.dataframe(
-            last_5_inc, 
-            hide_index=True, 
-            use_container_width=True,
-            column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
-        )
+        if privacy_mode:
+            display_inc = last_5_inc.copy()
+            display_inc["amount"] = "🔒 ***"
+            st.dataframe(display_inc, hide_index=True, use_container_width=True)
+        else:
+            st.dataframe(
+                last_5_inc, 
+                hide_index=True, 
+                use_container_width=True,
+                column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
+            )
     else:
         st.info("Chưa có dữ liệu hoặc đang tải...")
 
 # -----------------------------------
-# TAB 3: CHI PHÍ CỐ ĐỊNH (ĐỦ CỘT & ĐỒNG BỘ CHUẨN XÁC)
+# TAB 3: CHI PHÍ CỐ ĐỊNH
 # -----------------------------------
 with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
@@ -535,11 +592,10 @@ with tab_fixed:
             
         st.metric(
             label="TỔNG THỰC TRẢ THEO NGÀY BÁO CÁO", 
-            value=f"{int(tong_chi_phi):,} VND"
+            value=mask_money(tong_chi_phi)
         )
         st.divider() 
         
-        # Đầy đủ toàn bộ các cột đúng theo ý tưởng Google Sheets của bạn
         editable_cols = [
             "id", "name", "base_amount", "start_date", "end_date", 
             "chu_ky", "thang_thu_tien", "ngay_thanh_toan", 
