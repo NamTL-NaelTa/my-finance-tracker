@@ -230,10 +230,26 @@ with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
     st.markdown("Khu vực này hoạt động như một bảng Excel thu nhỏ. Bạn có thể **click đúp vào ô bất kỳ để sửa**, chọn dòng nhấn nút `Delete` để xóa, hoặc cuộn xuống cuối bảng để thêm gói cước mới.")
     
-    # Kéo dữ liệu từ sheet
+    # 1. Kéo dữ liệu từ sheet
     df_fixed = conn.read(worksheet="Fixed_Expenses_Base", ttl=0)
     
-    # Bật tính năng Data Editor siêu việt của Streamlit
+    # 2. Xử lý logic tính Tổng chi phí duy trì hàng tháng
+    tong_chi_phi = 0
+    # Đảm bảo bảng có dữ liệu và có cột tên là 'amount' (Bạn có thể sửa chữ 'amount' cho khớp với file Sheet)
+    if not df_fixed.empty and "amount" in df_fixed.columns:
+        # Ép kiểu dữ liệu cột amount về dạng số (bỏ qua các ô lỗi/trống)
+        df_fixed["amount"] = pd.to_numeric(df_fixed["amount"], errors="coerce").fillna(0)
+        # Tính tổng
+        tong_chi_phi = df_fixed["amount"].sum()
+    
+    # 3. Hiển thị con số Tổng siêu to khổng lồ
+    st.metric(
+        label="TỔNG CHI PHÍ DUY TRÌ HÀNG THÁNG", 
+        value=f"{int(tong_chi_phi):,} VND"
+    )
+    st.divider() # Vạch kẻ ngang phân cách
+    
+    # 4. Bật tính năng Data Editor siêu việt của Streamlit
     edited_df_fixed = st.data_editor(
         df_fixed,
         num_rows="dynamic", # Chìa khóa cho phép thêm/xóa dòng tự do
@@ -242,7 +258,7 @@ with tab_fixed:
         key="editor_fixed"
     )
     
-    # Nút lưu đồng bộ một lần
+    # 5. Nút lưu đồng bộ một lần
     submit_fixed = st.button("💾 Lưu Bảng Chi Phí Cố Định", type="primary", use_container_width=True)
     
     if submit_fixed:
