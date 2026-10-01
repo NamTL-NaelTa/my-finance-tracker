@@ -12,15 +12,37 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- PHẦN 1: BẢNG ĐIỀU KHIỂN (READ & FORMAT) ---
 st.subheader("📊 Trạng thái hiện tại")
+
+# Tạo 2 cột để đặt lịch và nút bấm cạnh nhau cho đẹp
+col_date, col_btn = st.columns([3, 1])
+
+with col_date:
+    # Bật bộ chọn lịch (Calendar)
+    ngay_bao_cao = st.date_input("📅 Chọn Tháng Báo Cáo (Ngày chốt sổ)", format="DD/MM/YYYY")
+
+with col_btn:
+    st.write("") # Dòng trống để căn chỉnh nút bấm ngang hàng với ô lịch
+    st.write("")
+    cap_nhat_btn = st.button("Cập nhật số liệu", type="secondary", use_container_width=True)
+
+# Khi bấm nút, hệ thống sẽ ghi đè ngày mới vào ô B1 trên sheet Dashboard
+if cap_nhat_btn:
+    with st.spinner("Đang tính toán lại dữ liệu..."):
+        # Truy cập trực tiếp vào sheet thông qua gspread client
+        worksheet = conn.client.worksheet("Dashboard")
+        # Định dạng thành mm/dd/yyyy để Google Sheets hiểu chuẩn xác
+        worksheet.update_acell("B1", ngay_bao_cao.strftime("%m/%d/%Y"))
+        st.rerun() # Tải lại trang để kéo số liệu mới về
+
+# Đọc dữ liệu mới nhất sau khi ô B1 đã được cập nhật
 dashboard_data = conn.read(worksheet="Dashboard", ttl=0) 
 
 # Hàm định dạng số có dấu phẩy phân cách hàng ngàn (Chuẩn quốc tế)
 def format_currency_intl(val):
     try:
-        # Dùng định dạng mặc định của Python: f"{...:,}" sẽ tự chèn dấu phẩy
         return f"{int(float(val)):,}"
     except (ValueError, TypeError):
-        return val # Nếu ô trống hoặc là chữ thì giữ nguyên
+        return val
 
 # Tự động tìm cột thứ 2 (chứa số liệu) để áp dụng định dạng
 if len(dashboard_data.columns) > 1:
