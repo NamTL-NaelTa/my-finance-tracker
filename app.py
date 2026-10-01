@@ -8,6 +8,10 @@ import gspread
 st.set_page_config(page_title="Quản Lý Dòng Tiền", page_icon="💰", layout="centered")
 st.title("💰 Quản Lý Dòng Tiền")
 
+# Khởi tạo bộ đếm để reset form mượt mà không gây lỗi
+if "form_reset_key" not in st.session_state:
+    st.session_state.form_reset_key = 0
+
 # Kết nối Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -74,8 +78,8 @@ col1, col2 = st.columns(2)
 
 with col1:
     ngay = st.date_input("Ngày giao dịch")
-    # Gắn key để quản lý trạng thái reset
-    so_tien = st.number_input("Số tiền (Nhập số ÂM nếu chi tiền)", value=0, step=1000, key="val_amount")
+    # Gắn thêm đuôi số đếm vào key để Streamlit tự động reset khi biến này thay đổi
+    so_tien = st.number_input("Số tiền (Nhập số ÂM nếu chi tiền)", value=0, step=1000, key=f"amount_{st.session_state.form_reset_key}")
 
 with col2:
     phan_loai = st.selectbox("Nhóm chi tiêu (Category)", list_categories)
@@ -87,9 +91,9 @@ with col2:
 if chon_loai == "Khác...":
     col3, col4 = st.columns(2)
     with col3:
-        noi_dung = st.text_input("Nhập nội dung mới (VD: Khám răng)", key="val_noidung")
+        noi_dung = st.text_input("Nhập nội dung mới (VD: Khám răng)", key=f"noidung_{st.session_state.form_reset_key}")
     with col4:
-        prefix = st.text_input("Nhập mã quy ước ngắn (VD: kr)", key="val_prefix")
+        prefix = st.text_input("Nhập mã quy ước ngắn (VD: kr)", key=f"prefix_{st.session_state.form_reset_key}")
 else:
     noi_dung = chon_loai
     prefix_df = df_danhmuc[(df_danhmuc['category'] == phan_loai) & (df_danhmuc['type'] == chon_loai)]
@@ -130,12 +134,9 @@ if submit:
             updated_df = pd.concat([df_trans, new_row], ignore_index=True)
             conn.update(worksheet="Transactions", data=updated_df)
             
-            # --- CLEAR TRẠNG THÁI Ô NHẬP LIỆU ---
-            st.session_state.val_amount = 0
-            if "val_noidung" in st.session_state:
-                st.session_state.val_noidung = ""
-            if "val_prefix" in st.session_state:
-                st.session_state.val_prefix = ""
+            # --- TUYỆT CHIÊU RESET FORM ---
+            # Chỉ cần cộng 1 vào bộ đếm, các ô input sẽ lập tức được làm mới hoàn toàn
+            st.session_state.form_reset_key += 1
                 
             st.toast(f"✅ Đã lưu thành công ID: {new_id}", icon="🎉")
             st.rerun()
