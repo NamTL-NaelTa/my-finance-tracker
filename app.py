@@ -37,16 +37,19 @@ with col_btn:
     cap_nhat_btn = st.button("Cập nhật số liệu", type="secondary", use_container_width=True)
 
 if cap_nhat_btn:
-    with st.spinner("Đang tính toán lại dữ liệu..."):
+    with st.spinner("Đang đồng bộ mốc thời gian và tính toán lại dữ liệu..."):
         try:
             gc = gspread.service_account_from_dict(st.secrets["connections"]["gsheets"])
             sh = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
             worksheet = sh.worksheet("Dashboard")
-            worksheet.update_acell("B1", ngay_bao_cao.strftime("%m/%d/%Y"))
+            
+            # Ép kiểu truyền dữ liệu chuẩn Date để Google Sheets hiểu và kích hoạt công thức mảng
+            worksheet.update("B1", [[ngay_bao_cao.strftime("%Y-%m-%d")]], value_input_option='USER_ENTERED')
+            
             st.cache_data.clear()
             st.rerun() 
         except Exception as e:
-            st.error("⚠️ Google Sheets đang xử lý quá nhiều yêu cầu. Vui lòng đợi 30 giây rồi thử lại!")
+            st.error(f"⚠️ Lỗi cập nhật ô B1: {e}")
 
 # Đọc dữ liệu Dashboard
 dashboard_data = safe_read_sheet("Dashboard", ttl=600) 
@@ -247,14 +250,13 @@ with tab_income:
 # -----------------------------------
 with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
-    st.markdown("💡 **Mẹo:** Các cột `thuc_tra_hien_tai` và `trang_thai` đã được tính tự động bằng công thức trên Google Sheets dựa vào Ngày chốt sổ. Bạn có thể cập nhật các thông số đầu vào (chu kỳ, ngày thanh toán...) trực tiếp tại đây.")
+    st.markdown("💡 **Mẹo:** Các cột `thuc_tra_hien_tai` và `trang_thai` được **tính toán tự động 100% bằng công thức trên Google Sheets** dựa vào mốc Ngày chọn báo cáo. Bạn có thể chỉnh sửa các tham số gốc trực tiếp tại đây.")
     
     df_fixed = safe_read_sheet("Fixed_Expenses_Base", ttl=600)
     
     if df_fixed is not None:
         tong_chi_phi = 0
         
-        # Lấy con số tổng từ cột thuc_tra_hien_tai (cột do công thức Sheets tự tính)
         if not df_fixed.empty and "thuc_tra_hien_tai" in df_fixed.columns:
             df_fixed["thuc_tra_hien_tai"] = pd.to_numeric(df_fixed["thuc_tra_hien_tai"], errors="coerce").fillna(0)
             tong_chi_phi = df_fixed["thuc_tra_hien_tai"].sum()
@@ -265,14 +267,10 @@ with tab_fixed:
         )
         st.divider() 
         
-        # Danh sách các cột ĐƯỢC PHÉP CHỈNH SỬA (Bao gồm các thông số tính chu kỳ)
-        editable_cols = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_tien", "ngay_thanh_toan"]
-        
-        # Lọc ra các cột tồn tại trong file
+        editable_cols = ["id", "name", "base_amount", "start_date", "end_date", "chu_ky", "thang_thu_ti", "ngay_thanh_t"]
         existing_cols = [col for col in editable_cols if col in df_fixed.columns]
         df_editable = df_fixed[existing_cols]
         
-        # Bảng Data Editor chỉ hiển thị các cột nhập liệu
         edited_df_fixed = st.data_editor(
             df_editable,
             num_rows="dynamic",
@@ -286,7 +284,6 @@ with tab_fixed:
         if submit_fixed:
             with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
                 try:
-                    # Ráp các cột chỉnh sửa vào khung bảng gốc
                     for col in existing_cols:
                         if len(edited_df_fixed) > len(df_fixed):
                             diff = len(edited_df_fixed) - len(df_fixed)
@@ -297,18 +294,16 @@ with tab_fixed:
                             
                         df_fixed[col] = edited_df_fixed[col].values
                     
-                    # LOẠI BỎ CÁC CỘT CHỨA CÔNG THỨC TRƯỚC KHI ĐẨY LÊN
                     cols_to_update = [c for c in df_fixed.columns if c not in ["thuc_tra_hien_tai", "trang_thai", "amount"]]
                     df_to_push = df_fixed[cols_to_update]
                     
-                    # Ghi đè các tham số lên Sheet, giữ an toàn tuyệt đối cho cột công thức
                     conn.update(worksheet="Fixed_Expenses_Base", data=df_to_push)
                     
-                    st.toast("✅ Đã cập nhật tham số gốc lên Sheets (Công thức ngầm được bảo toàn)!", icon="🎉")
+                    st.toast("✅ Đã cập nhật tham số gốc lên Sheets!", icon="🎉")
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
-                    st.error("⚠️ Lỗi mạng hoặc quá tải API. Vui lòng nhấn Lưu lại sau 30 giây!")
+                    st.error(f"⚠️ Lỗi: {e}")
     else:
         st.info("⏳ Đang đợi kết nối từ Google Sheets...")
 
@@ -316,7 +311,7 @@ with tab_fixed:
 # TAB 4: ĐIỀU CHỈNH
 # -----------------------------------
 with tab_adj:
-    st.subheader("⚖️️ Lịch sử điều chỉnh ngân sách")
+    st.subheader("⚖️ Lịch sử điều chỉnh ngân sách")
     st.info("Bảng ghi nhận các khoản phụ thu/giảm trừ vào ngân sách cố định hàng tháng.")
     df_adj = safe_read_sheet("Expense_Adjustments", ttl=600)
     
