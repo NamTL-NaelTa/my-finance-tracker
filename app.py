@@ -11,7 +11,7 @@ import calendar
 st.set_page_config(page_title="Quản Lý Dòng Tiền", page_icon="💰", layout="centered")
 
 # ==========================================
-# BẢO MẬT GIẢI PHÁP 1: MÀN HÌNH ĐĂNG NHẬP
+# BẢO MẬT: MÀN HÌNH ĐĂNG NHẬP
 # ==========================================
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -22,17 +22,16 @@ if not st.session_state.authenticated:
     
     password_input = st.text_input("Mật khẩu truy cập", type="password")
     if st.button("Đăng nhập", type="primary", use_container_width=True):
-        # Lấy mật khẩu từ secrets, mặc định là "123456" nếu chưa cấu hình
         correct_password = st.secrets.get("passwords", {}).get("app_password", "123456")
         if password_input == correct_password:
             st.session_state.authenticated = True
             st.rerun()
         else:
             st.error("⚠️ Mật khẩu không chính xác. Vui lòng thử lại!")
-    st.stop()  # Dừng toàn bộ code bên dưới nếu chưa đăng nhập thành công
+    st.stop()
 
 # ==========================================
-# BẢO MẬT GIẢI PHÁP 3: THANH CÔNG CỤ & PRIVACY MODE
+# THANH CÔNG CỤ & PRIVACY MODE
 # ==========================================
 with st.sidebar:
     st.markdown("### ⚙️ Cài đặt hệ thống")
@@ -41,7 +40,6 @@ with st.sidebar:
         st.session_state.authenticated = False
         st.rerun()
 
-# Hàm hỗ trợ hiển thị số tiền tùy thuộc vào Chế độ riêng tư
 def mask_money(amount):
     if privacy_mode:
         return "🔒 *** ₫"
@@ -93,7 +91,6 @@ dashboard_data = safe_read_sheet("Dashboard", ttl=600)
 if dashboard_data is not None:
     if len(dashboard_data.columns) > 1:
         col_name = dashboard_data.columns[1]
-        # Nếu bật Privacy mode, làm ẩn dữ liệu số trên bảng Dashboard
         if privacy_mode:
             display_dash = dashboard_data.copy()
             for col in display_dash.columns:
@@ -115,7 +112,7 @@ else:
     st.warning("⏳ Hệ thống đang quá tải yêu cầu từ Google. Vui lòng nhấn F5 tải lại trang sau 1 phút.")
 
 # ==========================================
-# HÀM PYTHON TÍNH TOÁN CỐ ĐỊNH CHUẨN TÊN CỘT
+# HÀM PYTHON TÍNH TOÁN CỐ ĐỊNH CHUẨN XÁC
 # ==========================================
 def calculate_fixed_expenses(df_fixed, df_adj, report_date):
     if df_fixed is None or df_fixed.empty:
@@ -328,8 +325,8 @@ try:
             du_bao_cuoi_thang = tong_thu_thang - run_rate_chi_vat - chi_co_dinh
 
             col_a1, col_a2 = st.columns(2)
-            col_a1.metric("Tốc độ đốt tiền dự kiến (Run Rate)", mask(run_rate_chi_vat), delta=f"Chi vặt thực tế {current_day} ngày: {int(tong_chi_thang):,}", delta_color="off")
-            col_a2.metric("Dự Báo Tiết Kiệm Cuối Tháng", mask(du_bao_cuoi_thang), delta=f"Nếu giữ nguyên tốc độ chi tiêu này", delta_color="normal")
+            col_a1.metric("Tốc độ đốt tiền dự kiến (Run Rate)", mask_money(run_rate_chi_vat), delta=f"Chi vặt thực tế {current_day} ngày: {int(tong_chi_thang):,}", delta_color="off")
+            col_a2.metric("Dự Báo Tiết Kiệm Cuối Tháng", mask_money(du_bao_cuoi_thang), delta=f"Nếu giữ nguyên tốc độ chi tiêu này", delta_color="normal")
             
             st.divider()
             st.markdown("🚨 **Cảnh báo rò rỉ bất thường**")
@@ -351,7 +348,7 @@ try:
                         avg_spent = avg_past_3m[cat]
                         if spent > avg_spent * 1.4 and (spent - avg_spent) > 500000:
                             percent_increase = ((spent - avg_spent) / avg_spent) * 100
-                            st.warning(f"⚠️ **{cat}**: Tháng này tiêu {mask(spent)} (Tăng **{int(percent_increase)}%** so với trung bình 3 tháng trước).")
+                            st.warning(f"⚠️ **{cat}**: Tháng này tiêu {mask_money(spent)} (Tăng **{int(percent_increase)}%** so với trung bình 3 tháng trước).")
                             anomaly_found = True
                 
                 if not anomaly_found:
@@ -469,7 +466,7 @@ with tab_trans:
             st.info("Chưa có dữ liệu hoặc đang tải...")
             
     else:
-        st.info("Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
+        st.info("⏳ Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
 
 # -----------------------------------
 # TAB 2: THU NHẬP
