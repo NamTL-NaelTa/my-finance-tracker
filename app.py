@@ -109,7 +109,9 @@ try:
             so_thang_chi = df_trans_ana['Tháng'].nunique() or 1
 
             bq_thu_nhap = df_inc_ana['amount'].sum() / so_thang_thu
-            bq_chi_vat = df_trans_ana['amount'].sum() / so_thang_chi
+            
+            # Lấy giá trị tuyệt đối để hiển thị số dương cho dễ đọc
+            bq_chi_vat = abs(df_trans_ana['amount'].sum() / so_thang_chi)
 
             chi_co_dinh = 0
             if df_fixed_ana is not None and "thuc_tra_hien_tai" in df_fixed_ana.columns:
@@ -118,11 +120,16 @@ try:
 
             du_bao_tiet_kiem = bq_thu_nhap - bq_chi_vat - chi_co_dinh
 
-            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+            # Chia lưới 2x2 để con số không bị cắt cụt
+            col_f1, col_f2 = st.columns(2)
             col_f1.metric("Tổng Thu TB/Tháng", f"{int(bq_thu_nhap):,} ₫")
-            col_f2.metric("Chi Vặt TB/Tháng", f"{int(bq_chi_vat):,} ₫", delta="Biến phí", delta_color="inverse")
-            col_f3.metric("Chi Cố Định Hiện Tại", f"{int(chi_co_dinh):,} ₫", delta="Định phí", delta_color="inverse")
-            col_f4.metric("DỰ BÁO TIẾT KIỆM", f"{int(du_bao_tiet_kiem):,} ₫", delta="Khoản khả dụng", delta_color="normal")
+            col_f2.metric("Chi Vặt TB/Tháng", f"{int(bq_chi_vat):,} ₫", delta="- Biến phí", delta_color="inverse")
+            
+            st.write("") # Dòng trống tạo khoảng nghỉ
+            
+            col_f3, col_f4 = st.columns(2)
+            col_f3.metric("Chi Cố Định Hiện Tại", f"{int(chi_co_dinh):,} ₫", delta="- Định phí", delta_color="inverse")
+            col_f4.metric("DỰ BÁO TIẾT KIỆM", f"{int(du_bao_tiet_kiem):,} ₫", delta="+ Khoản khả dụng", delta_color="normal")
             
             st.info("💡 **Mẹo đầu tư:** Ngay khi nhận lương tháng tới, bạn có thể cân nhắc chuyển ngay số tiền **Dự báo tiết kiệm** này vào một tài khoản sinh lời (hoặc quỹ dự phòng) trước khi bắt đầu chi tiêu.")
             
