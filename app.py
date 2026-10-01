@@ -2,6 +2,7 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
+import gspread
 
 # Cấu hình giao diện web
 st.set_page_config(page_title="Quản Lý Dòng Tiền", page_icon="💰", layout="centered")
@@ -28,9 +29,14 @@ with col_btn:
 # Khi bấm nút, hệ thống sẽ ghi đè ngày mới vào ô B1 trên sheet Dashboard
 if cap_nhat_btn:
     with st.spinner("Đang tính toán lại dữ liệu..."):
-        # Truy cập trực tiếp vào sheet thông qua gspread client
-        worksheet = conn.client.worksheet("Dashboard")
-        # Định dạng thành mm/dd/yyyy để Google Sheets hiểu chuẩn xác
+        # Mở khóa trực tiếp bằng chìa khóa trong file Secrets
+        gc = gspread.service_account_from_dict(st.secrets["connections"]["gsheets"])
+        
+        # Tìm đến đúng file Sheet và tab Dashboard
+        sh = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
+        worksheet = sh.worksheet("Dashboard")
+        
+        # Cập nhật duy nhất ô B1 để không làm hỏng công thức
         worksheet.update_acell("B1", ngay_bao_cao.strftime("%m/%d/%Y"))
         st.rerun() # Tải lại trang để kéo số liệu mới về
 
