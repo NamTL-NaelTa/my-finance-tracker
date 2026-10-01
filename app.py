@@ -48,7 +48,6 @@ if cap_nhat_btn:
 dashboard_data = safe_read_sheet("Dashboard", ttl=600) 
 
 if dashboard_data is not None:
-    # Áp dụng column_config để định dạng quốc tế cột số 2 của Dashboard
     if len(dashboard_data.columns) > 1:
         col_name = dashboard_data.columns[1]
         st.dataframe(
@@ -69,11 +68,11 @@ else:
 # ==========================================
 st.divider()
 
-tab_trans, tab_income, tab_fixed, tab_adj = st.tabs([
+# Rút gọn từ 4 xuống còn 3 Tab chính
+tab_trans, tab_income, tab_fixed = st.tabs([
     "🛒 Giao dịch", 
     "💰 Thu nhập", 
-    "🔒 Chi phí cố định", 
-    "⚙ Điều chỉnh"
+    "🔒 Chi phí cố định"
 ])
 
 # -----------------------------------
@@ -270,7 +269,7 @@ with tab_income:
         st.info("Chưa có dữ liệu hoặc đang tải...")
 
 # -----------------------------------
-# TAB 3: CHI PHÍ CỐ ĐỊNH
+# TAB 3: CHI PHÍ CỐ ĐỊNH (Tích hợp Điều chỉnh)
 # -----------------------------------
 with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
@@ -331,23 +330,36 @@ with tab_fixed:
                     st.rerun()
                 except Exception as e:
                     st.error(f"⚠️ Lỗi: {e}")
-    else:
-        st.info("⏳ Đang đợi kết nối từ Google Sheets...")
-
-# -----------------------------------
-# TAB 4: ĐIỀU CHỈNH
-# -----------------------------------
-with tab_adj:
-    st.subheader("⚖️️ Lịch sử điều chỉnh ngân sách")
-    st.info("Bảng ghi nhận các khoản phụ thu/giảm trừ vào ngân sách cố định hàng tháng.")
-    df_adj = safe_read_sheet("Expense_Adjustments", ttl=600)
-    
-    if df_adj is not None:
-        st.dataframe(
-            df_adj, 
-            hide_index=True, 
-            use_container_width=True,
-            column_config={"amount": st.column_config.NumberColumn(format="%,.0f")}
-        )
+                    
+        # ==========================================
+        # GỘP BẢNG ĐIỀU CHỈNH VÀO THANH MỞ RỘNG
+        # ==========================================
+        with st.expander("🛠️ Điều chỉnh ngân sách cố định (Phụ thu / Giảm trừ)"):
+            st.markdown("Bảng ghi nhận các khoản tăng/giảm đột xuất cho các gói cước cố định. Bạn có thể thêm/xóa dòng trực tiếp tại đây.")
+            df_adj = safe_read_sheet("Expense_Adjustments", ttl=600)
+            
+            if df_adj is not None:
+                edited_df_adj = st.data_editor(
+                    df_adj,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    hide_index=True,
+                    key="editor_adj",
+                    column_config={"amount": st.column_config.NumberColumn(format="%,.0f")}
+                )
+                
+                submit_adj = st.button("💾 Lưu Bảng Điều Chỉnh", type="secondary", use_container_width=True)
+                
+                if submit_adj:
+                    with st.spinner("Đang cập nhật phụ phí..."):
+                        try:
+                            conn.update(worksheet="Expense_Adjustments", data=edited_df_adj)
+                            st.toast("✅ Đã lưu khoản điều chỉnh!", icon="🎉")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ Lỗi: {e}")
+            else:
+                st.info("⏳ Đang đợi kết nối từ Google Sheets...")
     else:
         st.info("⏳ Đang đợi kết nối từ Google Sheets...")
