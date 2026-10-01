@@ -228,10 +228,29 @@ with tab_income:
 # -----------------------------------
 with tab_fixed:
     st.subheader("🏢 Quản lý Chi phí cố định (Base)")
-    st.info("Dưới đây là danh sách các gói cước và chi phí duy trì cố định của bạn (Netflix, iCloud, Gym...).")
+    st.markdown("Khu vực này hoạt động như một bảng Excel thu nhỏ. Bạn có thể **click đúp vào ô bất kỳ để sửa**, chọn dòng nhấn nút `Delete` để xóa, hoặc cuộn xuống cuối bảng để thêm gói cước mới.")
+    
+    # Kéo dữ liệu từ sheet
     df_fixed = conn.read(worksheet="Fixed_Expenses_Base", ttl=0)
-    st.dataframe(df_fixed, hide_index=True, use_container_width=True)
-
+    
+    # Bật tính năng Data Editor siêu việt của Streamlit
+    edited_df_fixed = st.data_editor(
+        df_fixed,
+        num_rows="dynamic", # Chìa khóa cho phép thêm/xóa dòng tự do
+        use_container_width=True,
+        hide_index=True,
+        key="editor_fixed"
+    )
+    
+    # Nút lưu đồng bộ một lần
+    submit_fixed = st.button("💾 Lưu Bảng Chi Phí Cố Định", type="primary", use_container_width=True)
+    
+    if submit_fixed:
+        with st.spinner("Đang đồng bộ dữ liệu lên Google Sheets..."):
+            # Ghi đè toàn bộ bảng đã chỉnh sửa lên file gốc
+            conn.update(worksheet="Fixed_Expenses_Base", data=edited_df_fixed)
+            st.toast("✅ Đã cập nhật thành công cấu trúc chi phí cố định!", icon="🎉")
+            st.rerun()
 # -----------------------------------
 # TAB 4: ĐIỀU CHỈNH
 # -----------------------------------
