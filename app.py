@@ -158,16 +158,28 @@ with col_btn:
     cap_nhat_btn = st.button("Cập nhật số liệu", type="secondary", use_container_width=True)
 
 if cap_nhat_btn:
-    with st.spinner("Đang tính toán lại toàn bộ dữ liệu..."):
+    with st.spinner("Đang tính toán lại và đồng bộ toàn bộ dữ liệu lên Google Sheets..."):
         try:
+            # 1. Cập nhật ngày chốt sổ vào ô B1 của Dashboard
             gc = gspread.service_account_from_dict(st.secrets["connections"]["gsheets"])
             sh = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
             worksheet = sh.worksheet("Dashboard")
             worksheet.update("B1", [[ngay_bao_cao.strftime("%Y-%m-%d")]], value_input_option='USER_ENTERED')
-        except Exception:
-            pass
+            
+            # 2. Tự động tính toán lại Chi phí cố định và ĐỒNG BỘ NGƯỢC về Google Sheets
+            df_fixed_temp = conn.read(worksheet="Fixed_Expenses_Base", ttl=0)
+            df_adj_temp = conn.read(worksheet="Expense_Adjustments", ttl=0)
+            
+            if df_fixed_temp is not None and not df_fixed_temp.empty:
+                df_fixed_updated = calculate_fixed_expenses(df_fixed_temp.copy(), df_adj_temp, ngay_bao_cao)
+                df_fixed_updated = df_fixed_updated.dropna(how="all")
+                conn.update(worksheet="Fixed_Expenses_Base", data=df_fixed_updated)
+                
+        except Exception as e:
+            st.error(f"⚠️ Có lỗi khi đồng bộ lên Sheets: {e}")
+            
         st.cache_data.clear()
-        st.rerun() 
+        st.rerun()
 
 # ==========================================
 # TRÁI TIM ỨNG DỤNG (DATA ENGINE HYBRID)
