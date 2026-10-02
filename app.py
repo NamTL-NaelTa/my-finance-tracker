@@ -211,12 +211,13 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
             except:
                 pass
         
-        # Tiêm số chi cố định chuẩn của Python vào Bảng
+        # Gắn dấu ÂM (-) cho số chi cố định để hiển thị chuẩn UX/UI
+        chi_co_dinh_hien_thi = -abs(chi_co_dinh) if chi_co_dinh > 0 else 0
         idx_fixed = dashboard_raw[dashboard_raw.iloc[:, 0].astype(str).str.contains("TỔNG CHI CỐ ĐỊNH", na=False, case=False)].index
         if not idx_fixed.empty:
-            dashboard_raw.loc[idx_fixed[0], col_name] = chi_co_dinh
+            dashboard_raw.loc[idx_fixed[0], col_name] = chi_co_dinh_hien_thi
             
-        # Lấy giá trị Thu Nhập và Đã Tiêu (giữ nguyên công thức từ Google Sheets của bạn)
+        # Lấy giá trị Thu Nhập và Đã Tiêu
         try:
             tong_thu = float(dashboard_raw.loc[dashboard_raw.iloc[:, 0].astype(str).str.contains("TỔNG THU NHẬP", na=False, case=False), col_name].values[0])
         except:
@@ -227,8 +228,8 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
         except:
             tong_tieu = 0
             
-        # Tính toán lại Khoản Dư Hiện Tại
-        khoan_du = tong_thu - chi_co_dinh - abs(tong_tieu)
+        # Tính toán lại Khoản Dư: Thu nhập (+) cộng với Chi cố định (-) và trừ giá trị tuyệt đối của Tiêu vặt (-)
+        khoan_du = tong_thu + chi_co_dinh_hien_thi - abs(tong_tieu)
         idx_du = dashboard_raw[dashboard_raw.iloc[:, 0].astype(str).str.contains("KHOẢN DƯ HIỆN TẠI", na=False, case=False)].index
         if not idx_du.empty:
             dashboard_raw.loc[idx_du[0], col_name] = khoan_du
