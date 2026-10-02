@@ -423,18 +423,16 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
     ])
 
     # -----------------------------------
-    # TAB 1: GIAO DỊCH HÀNG NGÀY
+    # TAB 1: GIAO DỊCH HÀNG NGÀY (THÊM & CRUD)
     # -----------------------------------
     with tab_trans:
         st.subheader("📝 Nhập giao dịch mới")
         
-        # Bỏ cache (ttl=0) để dropdown luôn cập nhật dữ liệu mới nhất tức thì
         df_danhmuc = conn.read(worksheet="Danh_muc", ttl=0)
         
         if df_danhmuc is not None and not df_danhmuc.empty:
             df_danhmuc = df_danhmuc.dropna(how="all")
             
-            # Chuẩn hóa dữ liệu: xóa khoảng trắng và loại bỏ các ô trống/lỗi
             df_danhmuc['category'] = df_danhmuc['category'].astype(str).str.strip()
             df_danhmuc['type'] = df_danhmuc['type'].astype(str).str.strip()
             
@@ -474,20 +472,13 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                     st.warning("⚠ Vui lòng nhập đầy đủ Nội dung mới và Mã quy ước!")
                 else:
                     with st.spinner("Đang lưu dữ liệu..."):
-                        # Đọc trực tiếp Transactions không qua cache để đếm ID chuẩn nhất
                         df_trans_raw = conn.read(worksheet="Transactions", ttl=0)
                         
                         if df_trans_raw is not None:
                             date_str = ngay.strftime("%m/%d/%Y") 
-                            yymmdd = ngay.strftime("%y%m%d")
-                            
-                            if "transaction_date" in df_trans_raw.columns:
-                                same_day_trans = df_trans_raw[df_trans_raw["transaction_date"] == date_str]
-                                stt = len(same_day_trans) + 1
-                            else:
-                                stt = 1
-                                
-                            new_id = f"tx_{prefix}_{yymmdd}_{stt:02d}"
+                            # Cải tiến ID: Thêm Giờ-Phút-Giây để chống trùng lặp tuyệt đối
+                            yymmdd_hhmmss = datetime.now().strftime("%y%m%d_%H%M%S")
+                            new_id = f"tx_{prefix}_{yymmdd_hhmmss}"
                             
                             new_row = pd.DataFrame({
                                 "id": [new_id],
@@ -501,7 +492,6 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                             updated_df = pd.concat([df_trans_raw, new_row], ignore_index=True)
                             conn.update(worksheet="Transactions", data=updated_df)
                             
-                            # TỰ ĐỘNG THÊM VÀO DANH MỤC NẾU CHỌN "KHÁC..."
                             if chon_loai == "Khác...":
                                 new_dm_row = pd.DataFrame({
                                     "category": [phan_loai],
@@ -519,21 +509,40 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                             st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
             
             st.divider()
-            st.write("🕒 **5 Giao dịch gần nhất**")
-            df_trans_history = safe_read_sheet("Transactions", ttl=600)
+            st.subheader("🕒 Lịch sử Giao dịch (Sửa/Xóa trực tiếp)")
+            
+            df_trans_history = conn.read(worksheet="Transactions", ttl=0)
             if df_trans_history is not None and not df_trans_history.empty:
-                last_5_trans = df_trans_history.tail(5).iloc[::-1]
                 if privacy_mode:
-                    display_trans = last_5_trans.copy()
+                    st.info("👁️ Chế độ riêng tư đang bật. Chức năng chỉnh sửa tạm thời bị khóa.")
+                    display_trans = df_trans_history.tail(10).copy()
                     display_trans["amount"] = "🔒 ***"
-                    st.dataframe(display_trans, hide_index=True, use_container_width=True)
+                    st.dataframe(display_trans.iloc[::-1], hide_index=True, use_container_width=True)
                 else:
-                    st.dataframe(
-                        last_5_trans, 
-                        hide_index=True, 
+                    st.markdown("💡 **Mẹo:** Sửa trực tiếp vào ô để thay đổi thông tin. Để xóa, click vào ô vuông đầu dòng cần xóa và bấm phím `Delete`. Bấm **Lưu Thay Đổi** khi hoàn tất.")
+                    
+                    edited_trans = st.data_editor(
+                        df_trans_history,
+                        num_rows="dynamic",
                         use_container_width=True,
-                        column_config={"amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")}
+                        hide_index=True,
+                        key="editor_trans",
+                        column_config={
+                            "amount": st.column_config.NumberColumn("Số tiền", format="%,.0f")
+                        }
                     )
+                    
+                    if st.button("💾 Lưu Thay Đổi Lịch Sử", type="secondary", use_container_width=True):
+                        with st.spinner("Đang cập nhật lại cơ sở dữ liệu..."):
+                            try:
+                                conn.update(worksheet="Transactions", data=edited_trans)
+                                st.toast("✅ Đã đồng bộ lịch sử giao dịch thành công!", icon="🎉")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"⚠️ Lỗi cập nhật: {e}")
+            else:
+                st.info("Chưa có dữ liệu giao dịch.")
                 
         else:
             st.info("Đang tải dữ liệu danh mục hoặc hệ thống quá tải. Vui lòng F5 sau ít phút...")
