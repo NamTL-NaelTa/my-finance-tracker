@@ -427,11 +427,18 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
     # -----------------------------------
     with tab_trans:
         st.subheader("📝 Nhập giao dịch mới")
-        df_danhmuc = df_danhmuc_raw.copy() if df_danhmuc_raw is not None else pd.DataFrame()
         
-        if not df_danhmuc.empty:
+        # Bỏ cache (ttl=0) để dropdown luôn cập nhật dữ liệu mới nhất tức thì
+        df_danhmuc = conn.read(worksheet="Danh_muc", ttl=0)
+        
+        if df_danhmuc is not None and not df_danhmuc.empty:
             df_danhmuc = df_danhmuc.dropna(how="all")
-            list_categories = df_danhmuc['category'].dropna().unique().tolist()
+            
+            # Chuẩn hóa dữ liệu: xóa khoảng trắng và loại bỏ các ô trống/lỗi
+            df_danhmuc['category'] = df_danhmuc['category'].astype(str).str.strip()
+            df_danhmuc['type'] = df_danhmuc['type'].astype(str).str.strip()
+            
+            list_categories = [c for c in df_danhmuc['category'].unique() if c and c.lower() not in ["nan", "none"]]
             
             col1, col2 = st.columns(2)
 
@@ -441,7 +448,9 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
 
             with col2:
                 phan_loai = st.selectbox("Nhóm chi tiêu (Category)", list_categories)
-                filtered_types = df_danhmuc[df_danhmuc['category'] == phan_loai]['type'].dropna().tolist()
+                
+                filtered_types = df_danhmuc[df_danhmuc['category'] == phan_loai]['type'].tolist()
+                filtered_types = [t for t in filtered_types if t and t.lower() not in ["nan", "none"]]
                 filtered_types.append("Khác...")
                 chon_loai = st.selectbox("Khoản chi tiết (Type)", filtered_types)
 
@@ -465,38 +474,55 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                     st.warning("⚠ Vui lòng nhập đầy đủ Nội dung mới và Mã quy ước!")
                 else:
                     with st.spinner("Đang lưu dữ liệu..."):
-                        date_str = ngay.strftime("%m/%d/%Y") 
-                        yymmdd = ngay.strftime("%y%m%d")
+                        # Đọc trực tiếp Transactions không qua cache để đếm ID chuẩn nhất
+                        df_trans_raw = conn.read(worksheet="Transactions", ttl=0)
                         
-                        if "transaction_date" in df_trans_raw.columns:
-                            same_day_trans = df_trans_raw[df_trans_raw["transaction_date"] == date_str]
-                            stt = len(same_day_trans) + 1
-                        else:
-                            stt = 1
+                        if df_trans_raw is not None:
+                            date_str = ngay.strftime("%m/%d/%Y") 
+                            yymmdd = ngay.strftime("%y%m%d")
                             
-                        new_id = f"tx_{prefix}_{yymmdd}_{stt:02d}"
-                        
-                        new_row = pd.DataFrame({
-                            "id": [new_id],
-                            "transaction_date": [date_str],
-                            "type": [noi_dung],
-                            "category": [phan_loai],
-                            "amount": [so_tien],
-                            "note": [""]
-                        })
-                        
-                        updated_df = pd.concat([df_trans_raw, new_row], ignore_index=True)
-                        conn.update(worksheet="Transactions", data=updated_df)
-                        
-                        st.session_state.form_reset_key += 1
-                        st.toast(f"✅ Đã lưu thành công ID: {new_id}", icon="🎉")
-                        st.cache_data.clear()
-                        st.rerun()
+                            if "transaction_date" in df_trans_raw.columns:
+                                same_day_trans = df_trans_raw[df_trans_raw["transaction_date"] == date_str]
+                                stt = len(same_day_trans) + 1
+                            else:
+                                stt = 1
+                                
+                            new_id = f"tx_{prefix}_{yymmdd}_{stt:02d}"
+                            
+                            new_row = pd.DataFrame({
+                                "id": [new_id],
+                                "transaction_date": [date_str],
+                                "type": [noi_dung],
+                                "category": [phan_loai],
+                                "amount": [so_tien],
+                                "note": [""]
+                            })
+                            
+                            updated_df = pd.concat([df_trans_raw, new_row], ignore_index=True)
+                            conn.update(worksheet="Transactions", data=updated_df)
+                            
+                            # TỰ ĐỘNG THÊM VÀO DANH MỤC NẾU CHỌN "KHÁC..."
+                            if chon_loai == "Khác...":
+                                new_dm_row = pd.DataFrame({
+                                    "category": [phan_loai],
+                                    "type": [noi_dung],
+                                    "prefix": [prefix]
+                                })
+                                updated_dm = pd.concat([df_danhmuc, new_dm_row], ignore_index=True)
+                                conn.update(worksheet="Danh_muc", data=updated_dm)
+                            
+                            st.session_state.form_reset_key += 1
+                            st.toast(f"✅ Đã lưu thành công ID: {new_id}", icon="🎉")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
             
             st.divider()
             st.write("🕒 **5 Giao dịch gần nhất**")
-            if not df_trans_raw.empty:
-                last_5_trans = df_trans_raw.tail(5).iloc[::-1]
+            df_trans_history = safe_read_sheet("Transactions", ttl=600)
+            if df_trans_history is not None and not df_trans_history.empty:
+                last_5_trans = df_trans_history.tail(5).iloc[::-1]
                 if privacy_mode:
                     display_trans = last_5_trans.copy()
                     display_trans["amount"] = "🔒 ***"
