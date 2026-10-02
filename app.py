@@ -423,7 +423,7 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
     ])
 
     # -----------------------------------
-    # TAB 1: GIAO DỊCH HÀNG NGÀY (THÊM & CRUD)
+    # TAB 1: GIAO DỊCH HÀNG NGÀY (THÊM & CRUD TỐI ƯU HIỂN THỊ)
     # -----------------------------------
     with tab_trans:
         st.subheader("📝 Nhập giao dịch mới")
@@ -476,7 +476,6 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                         
                         if df_trans_raw is not None:
                             date_str = ngay.strftime("%m/%d/%Y") 
-                            # Cải tiến ID: Thêm Giờ-Phút-Giây để chống trùng lặp tuyệt đối
                             yymmdd_hhmmss = datetime.now().strftime("%y%m%d_%H%M%S")
                             new_id = f"tx_{prefix}_{yymmdd_hhmmss}"
                             
@@ -513,16 +512,19 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
             
             df_trans_history = conn.read(worksheet="Transactions", ttl=0)
             if df_trans_history is not None and not df_trans_history.empty:
+                # Đảo ngược dòng để giao dịch mới nhất luôn nằm trên cùng
+                df_display = df_trans_history.iloc[::-1].reset_index(drop=True)
+                
                 if privacy_mode:
                     st.info("👁️ Chế độ riêng tư đang bật. Chức năng chỉnh sửa tạm thời bị khóa.")
-                    display_trans = df_trans_history.tail(10).copy()
+                    display_trans = df_display.head(10).copy()
                     display_trans["amount"] = "🔒 ***"
-                    st.dataframe(display_trans.iloc[::-1], hide_index=True, use_container_width=True)
+                    st.dataframe(display_trans, hide_index=True, use_container_width=True)
                 else:
-                    st.markdown("💡 **Mẹo:** Sửa trực tiếp vào ô để thay đổi thông tin. Để xóa, click vào ô vuông đầu dòng cần xóa và bấm phím `Delete`. Bấm **Lưu Thay Đổi** khi hoàn tất.")
+                    st.markdown("💡 **Mẹo:** Các giao dịch mới nhất hiển thị trên cùng. Sửa trực tiếp vào ô để thay đổi. Để xóa, chọn ô vuông đầu dòng và bấm `Delete`. Bấm **Lưu Thay Đổi** khi hoàn tất.")
                     
                     edited_trans = st.data_editor(
-                        df_trans_history,
+                        df_display,
                         num_rows="dynamic",
                         use_container_width=True,
                         hide_index=True,
@@ -535,7 +537,9 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                     if st.button("💾 Lưu Thay Đổi Lịch Sử", type="secondary", use_container_width=True):
                         with st.spinner("Đang cập nhật lại cơ sở dữ liệu..."):
                             try:
-                                conn.update(worksheet="Transactions", data=edited_trans)
+                                # Đảo ngược lại đúng thứ tự gốc (cũ ở trên, mới ở dưới) trước khi ghi vào Sheets
+                                df_to_save = edited_trans.iloc[::-1].reset_index(drop=True)
+                                conn.update(worksheet="Transactions", data=df_to_save)
                                 st.toast("✅ Đã đồng bộ lịch sử giao dịch thành công!", icon="🎉")
                                 st.cache_data.clear()
                                 st.rerun()
