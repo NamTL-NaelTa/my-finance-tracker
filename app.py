@@ -696,12 +696,19 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
         df_danhmuc_edit = df_danhmuc_raw.copy() if df_danhmuc_raw is not None else pd.DataFrame()
         
         if not df_danhmuc_edit.empty:
+            # Ép kiểu dữ liệu chuỗi và thay thế None bằng khoảng trống để mở khóa chỉnh sửa
+            if "prefix" in df_danhmuc_edit.columns:
+                df_danhmuc_edit["prefix"] = df_danhmuc_edit["prefix"].fillna("").astype(str)
+                
             edited_danhmuc = st.data_editor(
                 df_danhmuc_edit,
                 num_rows="dynamic",
                 use_container_width=True,
                 hide_index=True,
-                key="editor_danhmuc"
+                key="editor_danhmuc",
+                column_config={
+                    "prefix": st.column_config.TextColumn("prefix")
+                }
             )
             
             submit_danhmuc = st.button("💾 Lưu Danh Mục", type="primary", use_container_width=True)
@@ -717,5 +724,3 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                         st.rerun()
                     except Exception as e:
                         st.error(f"⚠️ Lỗi cập nhật: {e}")
-else:
-    st.info("⏳ Đang tải kết nối dữ liệu từ Google Sheets. Vui lòng chờ...")
