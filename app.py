@@ -423,15 +423,16 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
         "📑 Danh mục"
     ])
 
-    # -----------------------------------
-    # TAB 1: GIAO DỊCH HÀNG NGÀY (THÊM & CRUD TỐI ƯU HIỂN THỊ)
+   # -----------------------------------
+    # TAB 1: GIAO DỊCH HÀNG NGÀY (TỐI ƯU TỐC ĐỘ GIAO DIỆN)
     # -----------------------------------
     with tab_trans:
         st.subheader("📝 Nhập giao dịch mới")
         
-        df_danhmuc = conn.read(worksheet="Danh_muc", ttl=0)
+        # Sử dụng dữ liệu đã cache ở đầu trang thay vì tải lại từ Google Sheets
+        df_danhmuc = df_danhmuc_raw.copy() if df_danhmuc_raw is not None else pd.DataFrame()
         
-        if df_danhmuc is not None and not df_danhmuc.empty:
+        if not df_danhmuc.empty:
             df_danhmuc = df_danhmuc.dropna(how="all")
             
             df_danhmuc['category'] = df_danhmuc['category'].astype(str).str.strip()
@@ -473,9 +474,10 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                     st.warning("⚠ Vui lòng nhập đầy đủ Nội dung mới và Mã quy ước!")
                 else:
                     with st.spinner("Đang lưu dữ liệu..."):
-                        df_trans_raw = conn.read(worksheet="Transactions", ttl=0)
+                        # CHỈ KHI LƯU mới đọc trực tiếp từ Sheets để đề phòng ghi đè mất dữ liệu
+                        df_trans_db = conn.read(worksheet="Transactions", ttl=0)
                         
-                        if df_trans_raw is not None:
+                        if df_trans_db is not None:
                             date_str = ngay.strftime("%m/%d/%Y") 
                             yymmdd_hhmmss = datetime.now().strftime("%y%m%d_%H%M%S")
                             new_id = f"tx_{prefix}_{yymmdd_hhmmss}"
@@ -489,21 +491,22 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                                 "note": [""]
                             })
                             
-                            updated_df = pd.concat([df_trans_raw, new_row], ignore_index=True)
+                            updated_df = pd.concat([df_trans_db, new_row], ignore_index=True)
                             conn.update(worksheet="Transactions", data=updated_df)
                             
                             if chon_loai == "Khác...":
+                                df_dm_db = conn.read(worksheet="Danh_muc", ttl=0)
                                 new_dm_row = pd.DataFrame({
                                     "category": [phan_loai],
                                     "type": [noi_dung],
                                     "prefix": [prefix]
                                 })
-                                updated_dm = pd.concat([df_danhmuc, new_dm_row], ignore_index=True)
+                                updated_dm = pd.concat([df_dm_db, new_dm_row], ignore_index=True)
                                 conn.update(worksheet="Danh_muc", data=updated_dm)
                             
                             st.session_state.form_reset_key += 1
                             st.toast(f"✅ Đã lưu thành công ID: {new_id}", icon="🎉")
-                            st.cache_data.clear()
+                            st.cache_data.clear()  # Xóa bộ nhớ đệm để các biến raw tự động lấy dữ liệu mới
                             st.rerun()
                         else:
                             st.error("⚠️ Quá tải kết nối, chưa thể lưu. Vui lòng thử lại sau 30 giây!")
@@ -511,9 +514,10 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
             st.divider()
             st.subheader("🕒 Lịch sử Giao dịch (Sửa/Xóa trực tiếp)")
             
-            df_trans_history = conn.read(worksheet="Transactions", ttl=0)
-            if df_trans_history is not None and not df_trans_history.empty:
-                # Đảo ngược dòng để giao dịch mới nhất luôn nằm trên cùng
+            # Sử dụng dữ liệu đã cache cho phần lịch sử để không bị load lại mỗi khi nhập liệu
+            df_trans_history = df_trans_raw.copy() if df_trans_raw is not None else pd.DataFrame()
+            
+            if not df_trans_history.empty:
                 df_display = df_trans_history.iloc[::-1].reset_index(drop=True)
                 
                 if privacy_mode:
@@ -538,7 +542,6 @@ if dashboard_raw is not None and df_trans_raw is not None and df_fixed_raw is no
                     if st.button("💾 Lưu Thay Đổi Lịch Sử", type="secondary", use_container_width=True):
                         with st.spinner("Đang cập nhật lại cơ sở dữ liệu..."):
                             try:
-                                # Đảo ngược lại đúng thứ tự gốc (cũ ở trên, mới ở dưới) trước khi ghi vào Sheets
                                 df_to_save = edited_trans.iloc[::-1].reset_index(drop=True)
                                 conn.update(worksheet="Transactions", data=df_to_save)
                                 st.toast("✅ Đã đồng bộ lịch sử giao dịch thành công!", icon="🎉")
